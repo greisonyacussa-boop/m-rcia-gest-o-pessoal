@@ -199,12 +199,14 @@ export const Route = createFileRoute("/api/public/whatsapp-webhook")({
           } catch (error) {
             if (!result) await settleMessageQuota(companyId, outboundRef, 0).catch(() => undefined);
             if (result?.creditRef) {
-              await db
-                .rpc("refund_ai_credit", {
+              try {
+                await db.rpc("refund_ai_credit", {
                   _company_id: companyId,
                   _ref: result.creditRef,
-                })
-                .catch(() => undefined);
+                });
+              } catch {
+                // A falha no estorno não deve substituir o erro original da IA.
+              }
             }
             throw error;
           }

@@ -237,9 +237,11 @@ export async function processCentralFinanceWhatsapp(input: CentralInbound) {
   } catch (error) {
     if (!result) await settleMessageQuota(companyId, ref, 0).catch(() => undefined);
     if (result?.creditRef) {
-      await db
-        .rpc("refund_ai_credit", { _company_id: companyId, _ref: result.creditRef })
-        .catch(() => undefined);
+      try {
+        await db.rpc("refund_ai_credit", { _company_id: companyId, _ref: result.creditRef });
+      } catch {
+        // A falha no estorno não deve substituir o erro original da IA.
+      }
     }
     throw error;
   }

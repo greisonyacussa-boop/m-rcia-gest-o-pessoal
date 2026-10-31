@@ -545,9 +545,11 @@ export const interpretFinanceCommand = createServerFn({ method: "POST" })
         data.pdf,
       );
     } catch (error) {
-      await db
-        .rpc("refund_ai_credit", { _company_id: data.companyId, _ref: creditRef })
-        .catch(() => undefined);
+      try {
+        await db.rpc("refund_ai_credit", { _company_id: data.companyId, _ref: creditRef });
+      } catch {
+        // A falha no estorno não deve substituir o erro original do provedor de IA.
+      }
       throw error;
     }
     const draft = resolveEntities(mergeDraft(previous, interpreted), financeContext);
