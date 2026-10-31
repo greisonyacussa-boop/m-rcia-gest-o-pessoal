@@ -16,7 +16,7 @@ export const getMyCredits = createServerFn({ method: "POST" })
     const [comp, led] = await Promise.all([
       supabaseAdmin
         .from("company")
-        .select("creditos_saldo, creditos_origem, creditos_resetam_em")
+        .select("creditos_saldo, creditos_origem, creditos_resetam_em, status_cobranca")
         .eq("id", data.companyId)
         .maybeSingle(),
       supabaseAdmin
@@ -30,6 +30,7 @@ export const getMyCredits = createServerFn({ method: "POST" })
       saldo: comp.data?.creditos_saldo ?? 0,
       origem: comp.data?.creditos_origem ?? "trial",
       resetam_em: comp.data?.creditos_resetam_em ?? null,
+      status_cobranca: comp.data?.status_cobranca ?? null,
       ledger: led.data ?? [],
     };
   });

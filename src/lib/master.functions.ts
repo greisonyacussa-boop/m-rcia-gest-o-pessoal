@@ -217,6 +217,136 @@ export const suspendCompany = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export const listManualActivationPlans = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertSuper(context.supabase, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data, error } = await supabaseAdmin
+      .from("plan")
+      .select("id, slug, nome, preco_cents, moeda, intervalo, creditos_mensais")
+      .eq("ativo", true)
+      .order("preco_cents", { ascending: true });
+    if (error) throw error;
+    return { plans: data ?? [] };
+  });
+
+export const activateCompanyPlanManually = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { companyId: string; planId: string }) => {
+    const companyId = String(d?.companyId ?? "");
+    const planId = String(d?.planId ?? "");
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuid.test(companyId) || !uuid.test(planId)) {
+      throw new Error("Selecione um assinante e um plano válidos.");
+    }
+    return { companyId, planId };
+  })
+  .handler(async ({ context, data }) => {
+    await assertSuper(context.supabase, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const [companyResult, planResult, subscriptionResult] = await Promise.all([
+      supabaseAdmin
+        .from("company")
+        .select("id, nome, email_corporativo")
+        .eq("id", data.companyId)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("plan")
+        .select("id, slug, nome, ativo")
+        .eq("id", data.planId)
+        .eq("ativo", true)
+        .maybeSingle(),
+      supabaseAdmin.from("subscription").select("*").eq("company_id", data.companyId).maybeSingle(),
+    ]);
+    if (companyResult.error) throw companyResult.error;
+    if (planResult.error) throw planResult.error;
+    if (subscriptionResult.error) throw subscriptionResult.error;
+    const company = companyResult.data;
+    const plan = planResult.data;
+    if (!company) throw new Error("Assinante não encontrada.");
+    if (!plan) throw new Error("O plano escolhido não está ativo.");
+    const currentSubscription = subscriptionResult.data;
+    if (
+      currentSubscription?.external_subscription_id ||
+      currentSubscription?.stripe_subscription_id ||
+      currentSubscription?.paddle_subscription_id
+    ) {
+      throw new Error(
+        "Esta conta possui uma assinatura vinculada a um provedor de pagamento. Cancele-a no provedor antes de ativar manualmente, para evitar cobranças duplicadas.",
+      );
+    }
+
+    const now = new Date().toISOString();
+    const { error: subscriptionError } = await supabaseAdmin.from("subscription").upsert(
+      {
+        company_id: company.id,
+        plan_id: plan.id,
+        provider: "manual",
+        status: "active",
+        buyer_email: company.email_corporativo,
+        external_subscription_id: null,
+        external_customer_id: null,
+        stripe_subscription_id: null,
+        stripe_customer_id: null,
+        paddle_subscription_id: null,
+        paddle_customer_id: null,
+        payment_method_brand: null,
+        payment_method_last4: null,
+        payment_method_exp: null,
+        current_period_start: now,
+        current_period_end: null,
+        trial_ends_at: null,
+        cancel_at_period_end: false,
+        canceled_at: null,
+        next_billing_amount_cents: null,
+        metadata: {
+          activation_source: "manual_admin",
+          activated_by: context.userId,
+          activated_at: now,
+          billing: "none_until_manual_suspension_or_cancellation",
+        },
+        updated_at: now,
+      },
+      { onConflict: "company_id" },
+    );
+    if (subscriptionError) throw subscriptionError;
+
+    const { error: companyError } = await supabaseAdmin
+      .from("company")
+      .update({ status_cobranca: "ativo", selected_plan_slug: plan.slug, updated_at: now })
+      .eq("id", company.id);
+    if (companyError) {
+      const rollback = currentSubscription
+        ? await supabaseAdmin
+            .from("subscription")
+            .update(currentSubscription)
+            .eq("company_id", company.id)
+        : await supabaseAdmin.from("subscription").delete().eq("company_id", company.id);
+      const rollbackNote = rollback.error
+        ? ` A restauração da assinatura também falhou: ${rollback.error.message}`
+        : "";
+      throw new Error(
+        `Não foi possível ativar o acesso da empresa: ${companyError.message}.${rollbackNote}`,
+      );
+    }
+
+    const { data: credits, error: creditsError } = await supabaseAdmin.rpc("topup_plan_credits", {
+      _company_id: company.id,
+      _plan_slug: plan.slug,
+    });
+    return {
+      ok: true,
+      companyName: company.nome,
+      planName: plan.nome,
+      creditsUpdated: !creditsError,
+      credits: creditsError ? null : credits,
+      warning: creditsError
+        ? `O acesso foi ativado, mas não foi possível atualizar os créditos de IA: ${creditsError.message}`
+        : null,
+    };
+  });
+
 export const setCompanyTrial = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: { companyId: string; days: number; credits: number }) => ({

@@ -8,23 +8,41 @@ import { getMyCredits } from "@/lib/credits.functions";
 export function TrialBanner({ company }: { company: CompanyRow }) {
   const fetchCredits = useServerFn(getMyCredits);
   const [credits, setCredits] = useState<number | null>(company.creditos_saldo ?? null);
+  const [billingStatus, setBillingStatus] = useState(company.status_cobranca);
 
   useEffect(() => {
-    if (company.status_cobranca !== "trial") return;
+    setBillingStatus(company.status_cobranca);
+  }, [company.id, company.status_cobranca]);
+
+  useEffect(() => {
+    if (billingStatus !== "trial") return;
     let active = true;
     const load = () =>
       void fetchCredits({ data: { companyId: company.id } })
-        .then((result) => active && setCredits(result.saldo))
+        .then((result) => {
+          if (!active) return;
+          setCredits(result.saldo);
+          if (result.status_cobranca && result.status_cobranca !== "trial") {
+            setBillingStatus(result.status_cobranca as CompanyRow["status_cobranca"]);
+          }
+        })
         .catch(() => {});
     load();
-    const timer = setInterval(load, 60_000);
+    const timer = setInterval(load, 30_000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    window.addEventListener("focus", load);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       active = false;
       clearInterval(timer);
+      window.removeEventListener("focus", load);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [company.id, company.status_cobranca, fetchCredits]);
+  }, [company.id, billingStatus, fetchCredits]);
 
-  if (company.status_cobranca !== "trial") return null;
+  if (billingStatus !== "trial") return null;
   const days = trialDaysLeft(company.trial_ate);
   const creditLabel =
     credits === null ? "carregando saldo" : `${credits.toLocaleString("pt-BR")} créditos`;

@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import {
   ArrowRight,
   Building2,
+  CheckCircle2,
   CircleAlert,
   LogIn,
   Pause,
@@ -36,6 +37,8 @@ import {
   setCompanyTrial,
   resetCompanyOwnerPassword,
   getCompanyDetails,
+  listManualActivationPlans,
+  activateCompanyPlanManually,
 } from "@/lib/master.functions";
 import { adminGrantCredits } from "@/lib/credits.functions";
 
@@ -44,6 +47,22 @@ export const Route = createFileRoute("/master/assinantes")({
   component: EmpresasPage,
 });
 
+type ManualActivationPlan = {
+  id: string;
+  slug: string;
+  nome: string;
+  preco_cents: number;
+  moeda: string;
+  intervalo: string;
+  creditos_mensais: number;
+};
+
+type ManualActivationCompany = {
+  id: string;
+  nome: string;
+  selected_plan_slug?: string | null;
+};
+
 function EmpresasPage() {
   const navigate = useNavigate();
   const list = useServerFn(listCompanies);
@@ -51,6 +70,8 @@ function EmpresasPage() {
   const saveTrial = useServerFn(setCompanyTrial);
   const resetPwd = useServerFn(resetCompanyOwnerPassword);
   const details = useServerFn(getCompanyDetails);
+  const fetchActivationPlans = useServerFn(listManualActivationPlans);
+  const activateManualPlan = useServerFn(activateCompanyPlanManually);
   const grantCredits = useServerFn(adminGrantCredits);
   const [detail, setDetail] = useState<any | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -66,6 +87,11 @@ function EmpresasPage() {
   const [trialDays, setTrialDays] = useState(7);
   const [trialCredits, setTrialCredits] = useState(100);
   const [trialSaving, setTrialSaving] = useState(false);
+  const [activationCompany, setActivationCompany] = useState<ManualActivationCompany | null>(null);
+  const [activationPlans, setActivationPlans] = useState<ManualActivationPlan[]>([]);
+  const [activationPlanId, setActivationPlanId] = useState("");
+  const [activationLoading, setActivationLoading] = useState(false);
+  const [activationSaving, setActivationSaving] = useState(false);
 
   async function reload() {
     setLoading(true);
@@ -107,6 +133,52 @@ function EmpresasPage() {
     setTrialCompany(c);
     setTrialDays(7);
     setTrialCredits(Math.max(0, Number(c.creditos_saldo ?? 100)));
+  }
+
+  async function openManualActivation(c: ManualActivationCompany) {
+    setActivationCompany(c);
+    setActivationLoading(true);
+    setActivationPlans([]);
+    setActivationPlanId("");
+    try {
+      const result = await fetchActivationPlans();
+      const plans = result.plans as ManualActivationPlan[];
+      setActivationPlans(plans);
+      const selected = plans.find((plan) => plan.slug === c.selected_plan_slug) ?? plans[0];
+      setActivationPlanId(selected?.id ?? "");
+      if (plans.length === 0) toast.error("Cadastre um plano ativo antes de ativar o assinante.");
+    } catch (error) {
+      setActivationCompany(null);
+      toast.error(error instanceof Error ? error.message : "Não foi possível carregar os planos.");
+    } finally {
+      setActivationLoading(false);
+    }
+  }
+
+  async function confirmManualActivation() {
+    if (!activationCompany || !activationPlanId) {
+      toast.error("Selecione o plano que será ativado.");
+      return;
+    }
+    setActivationSaving(true);
+    try {
+      const result = await activateManualPlan({
+        data: { companyId: activationCompany.id, planId: activationPlanId },
+      });
+      setActivationCompany(null);
+      if (result.warning) {
+        toast.warning(result.warning, { duration: 12000 });
+      } else {
+        toast.success(
+          `Plano ${result.planName} ativado para ${result.companyName}. O aviso de trial será removido.`,
+        );
+      }
+      await reload();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível ativar o plano.");
+    } finally {
+      setActivationSaving(false);
+    }
   }
 
   async function confirmTrial() {
@@ -273,12 +345,12 @@ function EmpresasPage() {
 
       <Card className="overflow-hidden">
         <div className="grid grid-cols-12 text-xs font-medium text-muted-foreground bg-muted/50 px-4 py-2">
-          <div className="col-span-3">Nome</div>
+          <div className="col-span-2">Nome</div>
           <div className="col-span-2">Status</div>
           <div className="col-span-2">Trial até</div>
           <div className="col-span-2">Criada</div>
           <div className="col-span-1">Atividade</div>
-          <div className="col-span-2 text-right">Ações</div>
+          <div className="col-span-3 text-right">Ações</div>
         </div>
         {loading ? (
           <div className="p-8 grid place-items-center">
@@ -290,7 +362,7 @@ function EmpresasPage() {
           <ul className="divide-y">
             {rows.map((c) => (
               <li key={c.id} className="grid grid-cols-12 px-4 py-3 items-center text-sm">
-                <div className="col-span-3 min-w-0">
+                <div className="col-span-2 min-w-0">
                   <div className="font-medium truncate">{c.nome}</div>
                   <div className="text-xs text-muted-foreground truncate">{c.slug}</div>
                 </div>
@@ -308,7 +380,7 @@ function EmpresasPage() {
                     ? new Date(c.ultima_atividade).toLocaleDateString("pt-BR")
                     : "—"}
                 </div>
-                <div className="col-span-2 flex justify-end gap-1">
+                <div className="col-span-3 flex justify-end gap-1">
                   <Button
                     size="sm"
                     variant="outline"
@@ -341,6 +413,17 @@ function EmpresasPage() {
                   >
                     <CalendarClock className="size-3.5" />
                   </Button>
+                  {c.status_cobranca !== "ativo" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void openManualActivation(c)}
+                      title="Ativar plano manualmente, sem checkout"
+                      aria-label={`Ativar plano manualmente para ${c.nome}`}
+                    >
+                      <CheckCircle2 className="size-3.5" />
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
@@ -408,6 +491,81 @@ function EmpresasPage() {
             <Button onClick={confirmTrial} disabled={trialSaving}>
               {trialSaving && <Loader2 className="size-4 animate-spin" />}
               Liberar trial
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!activationCompany}
+        onOpenChange={(open) => {
+          if (!open && !activationSaving) setActivationCompany(null);
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Ativar plano para {activationCompany?.nome}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm leading-6 text-muted-foreground">
+              A ativação será manual, sem checkout nem cobrança automática. O acesso ficará ativo
+              até você suspender ou cancelar. Os créditos de IA serão ajustados conforme o plano.
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="manual-activation-plan">Plano</Label>
+              <select
+                id="manual-activation-plan"
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                value={activationPlanId}
+                onChange={(event) => setActivationPlanId(event.target.value)}
+                disabled={activationLoading || activationSaving || activationPlans.length === 0}
+              >
+                <option value="" disabled>
+                  {activationLoading ? "Carregando planos…" : "Selecione um plano"}
+                </option>
+                {activationPlans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.nome} ·{" "}
+                    {new Intl.NumberFormat("pt-BR", {
+                      style: "currency",
+                      currency: plan.moeda,
+                    }).format(plan.preco_cents / 100)}
+                    /{plan.intervalo === "month" ? "mês" : "ano"}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {activationPlans.find((plan) => plan.id === activationPlanId) && (
+              <p className="text-xs text-muted-foreground">
+                Plano selecionado:{" "}
+                {activationPlans
+                  .find((plan) => plan.id === activationPlanId)
+                  ?.creditos_mensais.toLocaleString("pt-BR")}{" "}
+                créditos de IA por período.
+              </p>
+            )}
+            {activationPlans.length > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                Esta ação não registra pagamento. Se houver uma assinatura ligada a Stripe ou outro
+                provedor, ela precisa ser cancelada no próprio provedor para evitar cobrança
+                externa.
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setActivationCompany(null)}
+              disabled={activationSaving}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => void confirmManualActivation()}
+              disabled={activationLoading || activationSaving || !activationPlanId}
+            >
+              {activationSaving && <Loader2 className="size-4 animate-spin" />}
+              Ativar plano manualmente
             </Button>
           </DialogFooter>
         </DialogContent>

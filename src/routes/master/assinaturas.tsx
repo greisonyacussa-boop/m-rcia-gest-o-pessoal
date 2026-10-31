@@ -27,6 +27,7 @@ export const Route = createFileRoute("/master/assinaturas")({
 type Row = {
   id: string;
   company_id: string;
+  provider: string;
   status: string;
   current_period_end: string | null;
   trial_ends_at: string | null;
@@ -106,7 +107,7 @@ function AssinaturasPage() {
 
   const stats = useMemo(() => {
     const mrr = rows
-      .filter((r) => r.status === "active")
+      .filter((r) => r.status === "active" && r.provider !== "manual")
       .reduce((s, r) => s + (r.plan?.preco_cents ?? 0), 0);
     const trial = rows.filter((r) => r.status === "trialing").length;
     const active = rows.filter((r) => r.status === "active").length;
@@ -154,7 +155,11 @@ function AssinaturasPage() {
       </Card>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Stat label="MRR estimado" value={formatBRL(stats.mrr)} hint="apenas ativas" />
+        <Stat
+          label="MRR estimado"
+          value={formatBRL(stats.mrr)}
+          hint="cobranças recorrentes ativas; sem acessos manuais"
+        />
         <Stat label="Ativas" value={stats.active.toString()} />
         <Stat label="Em trial" value={stats.trial.toString()} />
         <Stat label="Inadimplentes" value={stats.past.toString()} alert={stats.past > 0} />
@@ -243,6 +248,11 @@ function AssinaturasPage() {
                       </td>
                       <td className="px-4 py-3">
                         <Badge className={st.cls + " font-medium"}>{st.label}</Badge>
+                        {r.provider === "manual" && (
+                          <div className="mt-1 text-[10px] text-muted-foreground">
+                            Acesso manual · sem cobrança
+                          </div>
+                        )}
                         {r.cancel_at_period_end && (
                           <div className="text-[10px] text-amber-600 mt-1">
                             cancela no fim do período
