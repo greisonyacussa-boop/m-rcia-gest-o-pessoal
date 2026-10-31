@@ -630,6 +630,15 @@ body {
   -webkit-backdrop-filter: blur(22px);
 }
 
+/* Oculta apenas o CTA e o botão do selo flutuante injetado pela Lovable. */
+#lovable-badge-cta,
+#lovable-badge-close {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
