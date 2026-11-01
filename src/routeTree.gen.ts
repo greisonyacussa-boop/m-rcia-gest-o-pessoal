@@ -93,6 +93,7 @@ import { Route as MasterPlanosRouteImport } from './routes/master/planos'
 import { Route as MasterWhatsappRouteImport } from './routes/master/whatsapp'
 import { Route as MasterWhatsappMetaRouteImport } from './routes/master/whatsapp-meta'
 import { Route as MasterWhatsappQrRouteImport } from './routes/master/whatsapp-qr'
+import { Route as ApiInternalLovableAiProxyRouteImport } from './routes/api/internal/lovable-ai-proxy'
 import { Route as ApiPublicBrandAssetRouteImport } from './routes/api/public/brand-asset'
 import { Route as ApiPublicGoogleCallbackRouteImport } from './routes/api/public/google-callback'
 import { Route as ApiPublicStripeWebhookRouteImport } from './routes/api/public/stripe-webhook'
@@ -522,6 +523,12 @@ const MasterWhatsappQrRoute = MasterWhatsappQrRouteImport.update({
   path: '/whatsapp-qr',
   getParentRoute: () => MasterRoute,
 } as any)
+const ApiInternalLovableAiProxyRoute =
+  ApiInternalLovableAiProxyRouteImport.update({
+    id: '/api/internal/lovable-ai-proxy',
+    path: '/api/internal/lovable-ai-proxy',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicBrandAssetRoute = ApiPublicBrandAssetRouteImport.update({
   id: '/api/public/brand-asset',
   path: '/api/public/brand-asset',
@@ -645,6 +652,7 @@ export interface FileRoutesByFullPath {
   '/app/': typeof AppIndexRoute
   '/demo/': typeof DemoIndexRoute
   '/master/': typeof MasterIndexRoute
+  '/api/internal/lovable-ai-proxy': typeof ApiInternalLovableAiProxyRoute
   '/api/public/brand-asset': typeof ApiPublicBrandAssetRoute
   '/api/public/google-callback': typeof ApiPublicGoogleCallbackRoute
   '/api/public/stripe-webhook': typeof ApiPublicStripeWebhookRoute
@@ -735,6 +743,7 @@ export interface FileRoutesByTo {
   '/app': typeof AppIndexRoute
   '/demo': typeof DemoIndexRoute
   '/master': typeof MasterIndexRoute
+  '/api/internal/lovable-ai-proxy': typeof ApiInternalLovableAiProxyRoute
   '/api/public/brand-asset': typeof ApiPublicBrandAssetRoute
   '/api/public/google-callback': typeof ApiPublicGoogleCallbackRoute
   '/api/public/stripe-webhook': typeof ApiPublicStripeWebhookRoute
@@ -829,6 +838,7 @@ export interface FileRoutesById {
   '/app/': typeof AppIndexRoute
   '/demo/': typeof DemoIndexRoute
   '/master/': typeof MasterIndexRoute
+  '/api/internal/lovable-ai-proxy': typeof ApiInternalLovableAiProxyRoute
   '/api/public/brand-asset': typeof ApiPublicBrandAssetRoute
   '/api/public/google-callback': typeof ApiPublicGoogleCallbackRoute
   '/api/public/stripe-webhook': typeof ApiPublicStripeWebhookRoute
@@ -924,6 +934,7 @@ export interface FileRouteTypes {
     | '/app/'
     | '/demo/'
     | '/master/'
+    | '/api/internal/lovable-ai-proxy'
     | '/api/public/brand-asset'
     | '/api/public/google-callback'
     | '/api/public/stripe-webhook'
@@ -1014,6 +1025,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/demo'
     | '/master'
+    | '/api/internal/lovable-ai-proxy'
     | '/api/public/brand-asset'
     | '/api/public/google-callback'
     | '/api/public/stripe-webhook'
@@ -1107,6 +1119,7 @@ export interface FileRouteTypes {
     | '/app/'
     | '/demo/'
     | '/master/'
+    | '/api/internal/lovable-ai-proxy'
     | '/api/public/brand-asset'
     | '/api/public/google-callback'
     | '/api/public/stripe-webhook'
@@ -1131,6 +1144,7 @@ export interface RootRouteChildren {
   TrocarSenhaRoute: typeof TrocarSenhaRoute
   ApiManifestDotwebmanifestRoute: typeof ApiManifestDotwebmanifestRoute
   CsatTokenRoute: typeof CsatTokenRoute
+  ApiInternalLovableAiProxyRoute: typeof ApiInternalLovableAiProxyRoute
   ApiPublicBrandAssetRoute: typeof ApiPublicBrandAssetRoute
   ApiPublicGoogleCallbackRoute: typeof ApiPublicGoogleCallbackRoute
   ApiPublicStripeWebhookRoute: typeof ApiPublicStripeWebhookRoute
@@ -1729,6 +1743,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MasterWhatsappQrRouteImport
       parentRoute: typeof MasterRoute
     }
+    '/api/internal/lovable-ai-proxy': {
+      id: '/api/internal/lovable-ai-proxy'
+      path: '/api/internal/lovable-ai-proxy'
+      fullPath: '/api/internal/lovable-ai-proxy'
+      preLoaderRoute: typeof ApiInternalLovableAiProxyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/brand-asset': {
       id: '/api/public/brand-asset'
       path: '/api/public/brand-asset'
@@ -1973,6 +1994,7 @@ const rootRouteChildren: RootRouteChildren = {
   TrocarSenhaRoute: TrocarSenhaRoute,
   ApiManifestDotwebmanifestRoute: ApiManifestDotwebmanifestRoute,
   CsatTokenRoute: CsatTokenRoute,
+  ApiInternalLovableAiProxyRoute: ApiInternalLovableAiProxyRoute,
   ApiPublicBrandAssetRoute: ApiPublicBrandAssetRoute,
   ApiPublicGoogleCallbackRoute: ApiPublicGoogleCallbackRoute,
   ApiPublicStripeWebhookRoute: ApiPublicStripeWebhookRoute,
