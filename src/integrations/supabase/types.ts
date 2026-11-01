@@ -1620,6 +1620,73 @@ export type Database = {
           },
         ]
       }
+      fin_investimento: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          instituicao: string | null
+          nome: string
+          tipo: string
+          updated_at: string
+          valor_atual_cents: number
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          instituicao?: string | null
+          nome: string
+          tipo: string
+          updated_at?: string
+          valor_atual_cents: number
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          instituicao?: string | null
+          nome?: string
+          tipo?: string
+          updated_at?: string
+          valor_atual_cents?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fin_investimento_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "company"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fin_patrimonio_meta: {
+        Row: {
+          company_id: string
+          objetivo_cents: number
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          objetivo_cents?: number
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          objetivo_cents?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fin_patrimonio_meta_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: true
+            referencedRelation: "company"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       fin_orcamento: {
         Row: {
           alerta_percentual: number

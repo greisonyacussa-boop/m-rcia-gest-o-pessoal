@@ -39,6 +39,7 @@ import { Route as AppGuiaRouteImport } from './routes/app/guia'
 import { Route as AppHojeRouteImport } from './routes/app/hoje'
 import { Route as AppInicioRouteImport } from './routes/app/inicio'
 import { Route as AppIntegracoesRouteImport } from './routes/app/integracoes'
+import { Route as AppInvestimentosRouteImport } from './routes/app/investimentos'
 import { Route as AppMarciaRouteImport } from './routes/app/marcia'
 import { Route as AppMovimentacoesRouteImport } from './routes/app/movimentacoes'
 import { Route as AppNotificacoesRouteImport } from './routes/app/notificacoes'
@@ -251,6 +252,11 @@ const AppInicioRoute = AppInicioRouteImport.update({
 const AppIntegracoesRoute = AppIntegracoesRouteImport.update({
   id: '/integracoes',
   path: '/integracoes',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppInvestimentosRoute = AppInvestimentosRouteImport.update({
+  id: '/investimentos',
+  path: '/investimentos',
   getParentRoute: () => AppRoute,
 } as any)
 const AppMarciaRoute = AppMarciaRouteImport.update({
@@ -597,6 +603,7 @@ export interface FileRoutesByFullPath {
   '/app/hoje': typeof AppHojeRoute
   '/app/inicio': typeof AppInicioRoute
   '/app/integracoes': typeof AppIntegracoesRoute
+  '/app/investimentos': typeof AppInvestimentosRoute
   '/app/marcia': typeof AppMarciaRoute
   '/app/movimentacoes': typeof AppMovimentacoesRoute
   '/app/notificacoes': typeof AppNotificacoesRoute
@@ -688,6 +695,7 @@ export interface FileRoutesByTo {
   '/app/hoje': typeof AppHojeRoute
   '/app/inicio': typeof AppInicioRoute
   '/app/integracoes': typeof AppIntegracoesRoute
+  '/app/investimentos': typeof AppInvestimentosRoute
   '/app/marcia': typeof AppMarciaRoute
   '/app/movimentacoes': typeof AppMovimentacoesRoute
   '/app/notificacoes': typeof AppNotificacoesRoute
@@ -783,6 +791,7 @@ export interface FileRoutesById {
   '/app/hoje': typeof AppHojeRoute
   '/app/inicio': typeof AppInicioRoute
   '/app/integracoes': typeof AppIntegracoesRoute
+  '/app/investimentos': typeof AppInvestimentosRoute
   '/app/marcia': typeof AppMarciaRoute
   '/app/movimentacoes': typeof AppMovimentacoesRoute
   '/app/notificacoes': typeof AppNotificacoesRoute
@@ -879,6 +888,7 @@ export interface FileRouteTypes {
     | '/app/hoje'
     | '/app/inicio'
     | '/app/integracoes'
+    | '/app/investimentos'
     | '/app/marcia'
     | '/app/movimentacoes'
     | '/app/notificacoes'
@@ -970,6 +980,7 @@ export interface FileRouteTypes {
     | '/app/hoje'
     | '/app/inicio'
     | '/app/integracoes'
+    | '/app/investimentos'
     | '/app/marcia'
     | '/app/movimentacoes'
     | '/app/notificacoes'
@@ -1064,6 +1075,7 @@ export interface FileRouteTypes {
     | '/app/hoje'
     | '/app/inicio'
     | '/app/integracoes'
+    | '/app/investimentos'
     | '/app/marcia'
     | '/app/movimentacoes'
     | '/app/notificacoes'
@@ -1363,6 +1375,13 @@ declare module '@tanstack/react-router' {
       path: '/integracoes'
       fullPath: '/app/integracoes'
       preLoaderRoute: typeof AppIntegracoesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/investimentos': {
+      id: '/app/investimentos'
+      path: '/investimentos'
+      fullPath: '/app/investimentos'
+      preLoaderRoute: typeof AppInvestimentosRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/marcia': {
@@ -1831,6 +1850,7 @@ interface AppRouteChildren {
   AppHojeRoute: typeof AppHojeRoute
   AppInicioRoute: typeof AppInicioRoute
   AppIntegracoesRoute: typeof AppIntegracoesRoute
+  AppInvestimentosRoute: typeof AppInvestimentosRoute
   AppMarciaRoute: typeof AppMarciaRoute
   AppMovimentacoesRoute: typeof AppMovimentacoesRoute
   AppNotificacoesRoute: typeof AppNotificacoesRoute
@@ -1861,6 +1881,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppHojeRoute: AppHojeRoute,
   AppInicioRoute: AppInicioRoute,
   AppIntegracoesRoute: AppIntegracoesRoute,
+  AppInvestimentosRoute: AppInvestimentosRoute,
   AppMarciaRoute: AppMarciaRoute,
   AppMovimentacoesRoute: AppMovimentacoesRoute,
   AppNotificacoesRoute: AppNotificacoesRoute,

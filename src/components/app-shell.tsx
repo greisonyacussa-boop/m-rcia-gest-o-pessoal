@@ -13,6 +13,7 @@ import {
   Settings,
   Shield,
   Sparkles,
+  TrendingUp,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { supabase } from "@/lib/auth/realm-supabase";
@@ -48,7 +49,7 @@ type NavItem = {
   matches?: string[];
 };
 
-// Menu principal do assinante: exatamente as cinco áreas do produto.
+// Menu principal do assinante com as áreas financeiras e de apoio.
 const getMainItems = (assistantName: string): NavItem[] => [
   {
     to: "/app/inicio",
@@ -68,6 +69,7 @@ const getMainItems = (assistantName: string): NavItem[] => [
     icon: CalendarDays,
     matches: ["/app/calendario", "/app/orcamentos", "/app/recorrencias"],
   },
+  { to: "/app/investimentos", label: "Investimentos", icon: TrendingUp },
   { to: "/app/marcia", label: `Falar com ${assistantName}`, icon: Sparkles, featured: true },
   {
     to: "/app/configuracoes",
@@ -142,6 +144,7 @@ export function AppShell({
   const mobileOrder = [
     "/app/inicio",
     "/app/movimentacoes",
+    "/app/investimentos",
     "/app/marcia",
     "/app/planejamento",
     "/app/configuracoes",
@@ -156,13 +159,15 @@ export function AppShell({
           ? "Extrato"
           : label === "Planejamento e calendário"
             ? "Calendário"
-            : label === "Configurações"
-              ? "Ajustes"
-              : label === "Visão do mês"
-                ? "Mês"
-                : label.startsWith("Falar com ")
-                  ? branding.assistantName
-                  : label,
+            : label === "Investimentos"
+              ? "Investir"
+              : label === "Configurações"
+                ? "Ajustes"
+                : label === "Visão do mês"
+                  ? "Mês"
+                  : label.startsWith("Falar com ")
+                    ? branding.assistantName
+                    : label,
       icon,
     }));
 
