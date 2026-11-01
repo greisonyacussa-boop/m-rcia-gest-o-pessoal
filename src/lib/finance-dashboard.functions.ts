@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { addDays, daysBetween, sanitizeRange, toIsoDate } from "./finance-period";
+import { addDays, daysBetween, isIsoDate, sanitizeRange, toIsoDate } from "./finance-period";
 
 export type FinanceDashboardSnapshot = {
   month: string;
@@ -101,16 +101,19 @@ export type FinanceCalendarItem = {
 export type FinanceTransactionDetail = {
   id: string;
   date: string;
+  occurredDate?: string | null;
   time: string | null;
   type: "receita" | "despesa";
   description: string;
   merchant: string | null;
   category: string | null;
+  categoryId?: string | null;
   categoryColor: string | null;
   amountCents: number;
   paymentMethod: string | null;
   account: string | null;
   card: string | null;
+  cardLinked?: boolean;
   source: string;
   hasAttachment: boolean;
   status: string;
@@ -464,7 +467,7 @@ export const listFinanceTransactions = createServerFn({ method: "POST" })
       data,
     }): Promise<{
       items: FinanceTransactionDetail[];
-      categories: Array<{ id: string; name: string; color: string; type: string }>;
+      categories: Array<{ id: string; name: string; color: string; type: string; active: boolean }>;
       accounts: Array<{ id: string; name: string }>;
     }> => {
       await authorize(context, data.companyId);
@@ -474,7 +477,7 @@ export const listFinanceTransactions = createServerFn({ method: "POST" })
         db
           .from("fin_lancamento")
           .select(
-            "id,tipo,descricao,estabelecimento,valor_cents,status,vencimento,pago_em,competencia,ocorrido_em,categoria_id,conta_id,cartao_id,forma_pagamento,fonte,anexo_url,observacao,original_input,parcela_numero,parcela_total,created_at",
+            "id,tipo,descricao,estabelecimento,valor_cents,status,vencimento,pago_em,competencia,ocorrido_em,categoria_id,conta_id,cartao_id,fatura_id,forma_pagamento,fonte,anexo_url,observacao,original_input,parcela_numero,parcela_total,created_at",
           )
           .eq("company_id", data.companyId)
           .neq("status", "cancelado")
@@ -485,15 +488,11 @@ export const listFinanceTransactions = createServerFn({ method: "POST" })
           .limit(2000),
         db
           .from("fin_categoria")
-          .select("id,nome,tipo,cor")
+          .select("id,nome,tipo,cor,ativo")
           .eq("company_id", data.companyId)
-          .eq("ativo", true)
           .order("nome"),
         db.from("fin_conta").select("id,nome").eq("company_id", data.companyId).order("nome"),
-        db
-          .from("fin_cartao")
-          .select("id,nome,ultimos_quatro")
-          .eq("company_id", data.companyId),
+        db.from("fin_cartao").select("id,nome,ultimos_quatro").eq("company_id", data.companyId),
       ]);
       const failed = [rows, categories, accounts, cards].find((r) => r.error)?.error;
       if (failed) throw new Error(failed.message);
@@ -508,16 +507,21 @@ export const listFinanceTransactions = createServerFn({ method: "POST" })
           return {
             id: row.id,
             date: row.competencia,
+            occurredDate: typeof row.ocorrido_em === "string" ? row.ocorrido_em.slice(0, 10) : null,
             time: timeOf(row.ocorrido_em) ?? timeOf(row.created_at),
             type: row.tipo,
             description: row.descricao,
             merchant: row.estabelecimento || null,
             category: category?.nome || null,
+            categoryId: row.categoria_id || null,
             categoryColor: category?.cor || null,
             amountCents: cents(row.valor_cents),
             paymentMethod: row.forma_pagamento || null,
             account: account?.nome || null,
-            card: card ? `${card.nome}${card.ultimos_quatro ? ` •${card.ultimos_quatro}` : ""}` : null,
+            card: card
+              ? `${card.nome}${card.ultimos_quatro ? ` •${card.ultimos_quatro}` : ""}`
+              : null,
+            cardLinked: Boolean(row.cartao_id || row.fatura_id),
             source: row.fonte || "manual",
             hasAttachment: Boolean(row.anexo_url),
             status: row.status,
@@ -536,6 +540,7 @@ export const listFinanceTransactions = createServerFn({ method: "POST" })
           name: r.nome,
           color: r.cor,
           type: r.tipo,
+          active: Boolean(r.ativo),
         })),
         accounts: (accounts.data || []).map((r: any) => ({ id: r.id, name: r.nome })),
       };
@@ -639,7 +644,9 @@ export const getFinancePlanner = createServerFn({ method: "POST" })
       }
     }
     return items.sort(
-      (a, b) => a.date.localeCompare(b.date) || String(a.time || "99").localeCompare(String(b.time || "99")),
+      (a, b) =>
+        a.date.localeCompare(b.date) ||
+        String(a.time || "99").localeCompare(String(b.time || "99")),
     );
   });
 
@@ -669,11 +676,57 @@ export const addFinanceTransaction = createServerFn({ method: "POST" })
         .trim()
         .slice(0, 240);
       const amountCents = Number(input?.amountCents);
+      const type = input?.type === "receita" || input?.type === "despesa" ? input.type : null;
+      const date = input?.date == null ? null : String(input.date).trim() || null;
+      const categoryId = input?.categoryId ? String(input.categoryId).trim() || null : null;
+      const accountId = input?.accountId ? String(input.accountId).trim() || null : null;
+      const paymentMethod = input?.paymentMethod
+        ? String(input.paymentMethod).trim() || null
+        : null;
+      const merchant = input?.merchant ? String(input.merchant).trim().slice(0, 160) || null : null;
+      const note = input?.note ? String(input.note).trim().slice(0, 500) || null : null;
+      const status =
+        input?.status == null
+          ? "pago"
+          : input.status === "pago" || input.status === "pendente"
+            ? input.status
+            : null;
+      const source =
+        input?.source == null
+          ? "manual"
+          : ["manual", "ia", "whatsapp"].includes(input.source)
+            ? input.source
+            : null;
+      const originalInput = input?.originalInput
+        ? String(input.originalInput).trim().slice(0, 1000) || null
+        : null;
+      const aiCommandId = input?.aiCommandId ? String(input.aiCommandId).trim() || null : null;
       if (!companyId) throw new Error("Conta não informada.");
+      if (!type) throw new Error("Tipo de lançamento inválido.");
       if (!description) throw new Error("Descrição não informada.");
       if (!Number.isSafeInteger(amountCents) || amountCents <= 0)
         throw new Error("Informe um valor válido.");
-      return { ...input, companyId, description, amountCents };
+      if (date && !isIsoDate(date)) throw new Error("Data inválida.");
+      if (paymentMethod && !PAYMENT_METHODS.has(paymentMethod))
+        throw new Error("Forma de pagamento inválida.");
+      if (!status) throw new Error("Situação do lançamento inválida.");
+      if (!source) throw new Error("Origem do lançamento inválida.");
+      return {
+        companyId,
+        type,
+        description,
+        amountCents,
+        date,
+        categoryId,
+        accountId,
+        paymentMethod,
+        merchant,
+        note,
+        status,
+        source,
+        originalInput,
+        aiCommandId,
+      };
     },
   )
   .handler(async ({ context, data }) => {
@@ -681,10 +734,34 @@ export const addFinanceTransaction = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const db = supabaseAdmin as any;
     const date =
-      data.date && /^\d{4}-\d{2}-\d{2}$/.test(data.date)
-        ? data.date
-        : new Date().toISOString().slice(0, 10);
-    const status = data.status || "pago";
+      data.date ||
+      new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+
+    if (data.categoryId) {
+      const { data: category, error: categoryError } = await db
+        .from("fin_categoria")
+        .select("id,tipo,ativo")
+        .eq("id", data.categoryId)
+        .eq("company_id", data.companyId)
+        .maybeSingle();
+      if (categoryError) throw new Error(categoryError.message);
+      if (!category || !category.ativo) throw new Error("Escolha uma categoria ativa desta conta.");
+      if (category.tipo !== "ambos" && category.tipo !== data.type)
+        throw new Error("A categoria não corresponde ao tipo do lançamento.");
+    }
+
+    if (data.accountId) {
+      const { data: account, error: accountError } = await db
+        .from("fin_conta")
+        .select("id")
+        .eq("id", data.accountId)
+        .eq("company_id", data.companyId)
+        .eq("ativo", true)
+        .maybeSingle();
+      if (accountError) throw new Error(accountError.message);
+      if (!account) throw new Error("Conta financeira não encontrada ou inativa.");
+    }
+
     const { data: row, error } = await db
       .from("fin_lancamento")
       .insert({
@@ -692,27 +769,212 @@ export const addFinanceTransaction = createServerFn({ method: "POST" })
         tipo: data.type,
         descricao: data.description,
         valor_cents: data.amountCents,
-        categoria_id: data.categoryId || null,
-        conta_id: data.accountId || null,
-        forma_pagamento: PAYMENT_METHODS.has(String(data.paymentMethod))
-          ? data.paymentMethod
-          : null,
-        estabelecimento: data.merchant ? String(data.merchant).trim().slice(0, 160) || null : null,
-        observacao: data.note ? String(data.note).trim().slice(0, 500) || null : null,
-        status,
+        categoria_id: data.categoryId,
+        conta_id: data.accountId,
+        forma_pagamento: data.paymentMethod,
+        estabelecimento: data.merchant,
+        observacao: data.note,
+        status: data.status,
         vencimento: date,
-        pago_em: status === "pago" ? date : null,
+        pago_em: data.status === "pago" ? date : null,
         competencia: date,
         ocorrido_em: `${date}T12:00:00.000Z`,
-        fonte: data.source || "manual",
-        original_input: data.originalInput || null,
-        ai_command_id: data.aiCommandId || null,
+        fonte: data.source,
+        original_input: data.originalInput,
+        ai_command_id: data.aiCommandId,
         created_by: context.userId,
       })
       .select("id")
       .single();
     if (error) throw new Error(error.message);
     return row;
+  });
+
+export const updateFinanceTransaction = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: {
+      companyId: string;
+      transactionId: string;
+      type: "receita" | "despesa";
+      description: string;
+      amountCents: number;
+      date: string;
+      categoryId?: string | null;
+      paymentMethod?: string | null;
+      merchant?: string | null;
+      note?: string | null;
+    }) => {
+      const companyId = String(input?.companyId || "").trim();
+      const transactionId = String(input?.transactionId || "").trim();
+      const description = String(input?.description || "")
+        .trim()
+        .slice(0, 240);
+      const amountCents = Number(input?.amountCents);
+      const date = String(input?.date || "").trim();
+      const type = input?.type === "receita" || input?.type === "despesa" ? input.type : null;
+      const categoryId = input?.categoryId ? String(input.categoryId).trim() || null : null;
+      const paymentMethod = input?.paymentMethod
+        ? String(input.paymentMethod).trim() || null
+        : null;
+      const merchant = input?.merchant ? String(input.merchant).trim().slice(0, 160) || null : null;
+      const note = input?.note ? String(input.note).trim().slice(0, 500) || null : null;
+      if (!companyId) throw new Error("Conta não informada.");
+      if (!transactionId) throw new Error("Lançamento não informado.");
+      if (!type) throw new Error("Tipo de lançamento inválido.");
+      if (!description) throw new Error("Descrição não informada.");
+      if (!Number.isSafeInteger(amountCents) || amountCents <= 0)
+        throw new Error("Informe um valor válido.");
+      if (!isIsoDate(date)) throw new Error("Data inválida.");
+      if (paymentMethod && !PAYMENT_METHODS.has(paymentMethod))
+        throw new Error("Forma de pagamento inválida.");
+      return {
+        companyId,
+        transactionId,
+        type,
+        description,
+        amountCents,
+        date,
+        categoryId,
+        paymentMethod,
+        merchant,
+        note,
+      };
+    },
+  )
+  .handler(async ({ context, data }) => {
+    await authorize(context, data.companyId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const db = supabaseAdmin as any;
+
+    const { data: current, error: currentError } = await db
+      .from("fin_lancamento")
+      .select(
+        "id,status,ocorrido_em,competencia,vencimento,pago_em,categoria_id,cartao_id,fatura_id,forma_pagamento,tipo,valor_cents",
+      )
+      .eq("id", data.transactionId)
+      .eq("company_id", data.companyId)
+      .neq("status", "cancelado")
+      .maybeSingle();
+    if (currentError) throw new Error(currentError.message);
+    if (!current) throw new Error("Lançamento não encontrado ou já removido.");
+    const cardLinked = Boolean(current.cartao_id || current.fatura_id);
+    if (
+      cardLinked &&
+      (data.amountCents !== cents(current.valor_cents) ||
+        data.type !== current.tipo ||
+        data.date !== current.competencia ||
+        data.paymentMethod !== current.forma_pagamento)
+    ) {
+      throw new Error(
+        "Este lançamento está vinculado a uma fatura de cartão. Valor, tipo, competência e forma de pagamento só podem ser alterados pela área do cartão.",
+      );
+    }
+
+    if (data.categoryId) {
+      const { data: category, error: categoryError } = await db
+        .from("fin_categoria")
+        .select("id,tipo,ativo")
+        .eq("id", data.categoryId)
+        .eq("company_id", data.companyId)
+        .maybeSingle();
+      if (categoryError) throw new Error(categoryError.message);
+      if (!category) throw new Error("Categoria não encontrada nesta conta.");
+      if (category.tipo !== "ambos" && category.tipo !== data.type)
+        throw new Error("A categoria não corresponde ao tipo do lançamento.");
+      if (!category.ativo && category.id !== current.categoria_id)
+        throw new Error("Escolha uma categoria ativa.");
+    }
+
+    // Competência, vencimento, pagamento e ocorrência podem ter datas diferentes.
+    // Só acompanhe a nova competência quando as datas estavam alinhadas antes da edição.
+    const nextDueDate =
+      !current.vencimento || current.vencimento === current.competencia
+        ? data.date
+        : current.vencimento;
+    const nextPaidAt =
+      current.pago_em && current.pago_em === current.competencia ? data.date : current.pago_em;
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+    }).format(new Date());
+    const nextStatus =
+      current.status === "atrasado" && nextDueDate && nextDueDate >= today
+        ? "pendente"
+        : current.status;
+    const updates: Record<string, unknown> = {
+      tipo: data.type,
+      descricao: data.description,
+      valor_cents: data.amountCents,
+      categoria_id: data.categoryId,
+      forma_pagamento: data.paymentMethod,
+      estabelecimento: data.merchant,
+      observacao: data.note,
+      competencia: data.date,
+      vencimento: nextDueDate,
+      pago_em: nextPaidAt,
+      status: nextStatus,
+    };
+    if (
+      data.date !== current.competencia &&
+      typeof current.ocorrido_em === "string" &&
+      current.ocorrido_em.slice(0, 10) === current.competencia
+    ) {
+      const occurredTime = current.ocorrido_em.match(/T(.+)$/)?.[1] || "12:00:00.000Z";
+      updates.ocorrido_em = `${data.date}T${occurredTime}`;
+    }
+    let updateQuery = db
+      .from("fin_lancamento")
+      .update(updates)
+      .eq("id", data.transactionId)
+      .eq("company_id", data.companyId);
+    if (!cardLinked) updateQuery = updateQuery.is("cartao_id", null).is("fatura_id", null);
+    const { data: updated, error: updateError } = await updateQuery.select("id").maybeSingle();
+    if (updateError) throw new Error(updateError.message);
+    if (!updated) throw new Error("O lançamento não foi atualizado.");
+    return updated;
+  });
+
+export const cancelFinanceTransaction = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string; transactionId: string }) => {
+    const companyId = String(input?.companyId || "").trim();
+    const transactionId = String(input?.transactionId || "").trim();
+    if (!companyId) throw new Error("Conta não informada.");
+    if (!transactionId) throw new Error("Lançamento não informado.");
+    return { companyId, transactionId };
+  })
+  .handler(async ({ context, data }) => {
+    await authorize(context, data.companyId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const db = supabaseAdmin as any;
+    const { data: current, error: currentError } = await db
+      .from("fin_lancamento")
+      .select("id,cartao_id,fatura_id")
+      .eq("id", data.transactionId)
+      .eq("company_id", data.companyId)
+      .neq("status", "cancelado")
+      .maybeSingle();
+    if (currentError) throw new Error(currentError.message);
+    if (!current) throw new Error("Lançamento não encontrado ou já removido.");
+    if (current.cartao_id || current.fatura_id) {
+      throw new Error(
+        "Este lançamento está vinculado a uma fatura de cartão. Remova-o pela área do cartão para preservar o total da fatura.",
+      );
+    }
+    const { data: canceled, error } = await db
+      .from("fin_lancamento")
+      .update({ status: "cancelado" })
+      .eq("id", data.transactionId)
+      .eq("company_id", data.companyId)
+      .is("cartao_id", null)
+      .is("fatura_id", null)
+      .neq("status", "cancelado")
+      .select("id")
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!canceled)
+      throw new Error("O lançamento mudou de estado; atualize a tela e tente novamente.");
+    return canceled;
   });
 
 export const finishFinanceOnboarding = createServerFn({ method: "POST" })

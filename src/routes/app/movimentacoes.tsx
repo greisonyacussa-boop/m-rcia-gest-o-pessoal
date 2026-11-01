@@ -9,6 +9,16 @@ import { useBrand } from "@/contexts/brand-context";
 import { PageHeader } from "@/components/marcia/page-kit";
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -28,9 +38,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { FinanceEmpty, FinanceError, FinanceLoading } from "@/components/finance/finance-states";
+import { EditTransactionDialog } from "@/components/finance/edit-transaction-dialog";
 import { TransactionsView } from "@/components/finance/transactions-view";
 import {
   addFinanceTransaction,
+  cancelFinanceTransaction,
   listFinanceTransactions,
   type FinanceTransactionDetail,
 } from "@/lib/finance-dashboard.functions";
@@ -48,7 +60,7 @@ export const Route = createFileRoute("/app/movimentacoes")({
 
 type Payload = {
   items: FinanceTransactionDetail[];
-  categories: Array<{ id: string; name: string; color: string; type: string }>;
+  categories: Array<{ id: string; name: string; color: string; type: string; active: boolean }>;
   accounts: Array<{ id: string; name: string }>;
 };
 
@@ -57,10 +69,14 @@ function TransactionsPage() {
   const ctx = Route.useRouteContext();
   const companyId = ctx.company?.id;
   const list = useServerFn(listFinanceTransactions);
+  const cancel = useServerFn(cancelFinanceTransaction);
   const [period, setPeriod] = useState<FinancePeriod>(() => resolveFinancePeriod("this_month"));
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [editingItem, setEditingItem] = useState<FinanceTransactionDetail | null>(null);
+  const [deletingItem, setDeletingItem] = useState<FinanceTransactionDetail | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!companyId) return;
@@ -82,6 +98,22 @@ function TransactionsPage() {
     return () => window.removeEventListener("marcia:finance-updated", onUpdate);
   }, [refresh]);
 
+  async function confirmDelete() {
+    const item = deletingItem;
+    if (!companyId || !item) return;
+    setDeleting(true);
+    try {
+      await cancel({ data: { companyId, transactionId: item.id } });
+      toast.success("Lançamento removido do extrato.");
+      setDeletingItem(null);
+      window.dispatchEvent(new CustomEvent("marcia:finance-updated"));
+    } catch (error: any) {
+      toast.error(error?.message || "Não foi possível remover o lançamento.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -89,14 +121,18 @@ function TransactionsPage() {
         title="Movimentações"
         description="Tudo que entrou pelo chat, WhatsApp, foto ou registro manual, com todos os detalhes."
         action={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button asChild size="sm" variant="outline" className="rounded-xl">
               <Link to="/app/marcia">
                 <Mic /> Registrar falando
               </Link>
             </Button>
             {companyId && data && (
-              <NewTransactionDialog companyId={companyId} data={data} onCreated={refresh} />
+              <NewTransactionDialog
+                companyId={companyId}
+                data={data}
+                onCreated={() => window.dispatchEvent(new CustomEvent("marcia:finance-updated"))}
+              />
             )}
           </div>
         }
@@ -111,6 +147,8 @@ function TransactionsPage() {
           period={period}
           onPeriodChange={setPeriod}
           loading={loading}
+          onEdit={setEditingItem}
+          onDelete={setDeletingItem}
           emptyState={
             <FinanceEmpty
               title="Nenhuma movimentação neste período"
@@ -120,6 +158,50 @@ function TransactionsPage() {
           }
         />
       ) : null}
+      {data && companyId && editingItem && (
+        <EditTransactionDialog
+          onOpenChange={(open) => {
+            if (!open) setEditingItem(null);
+          }}
+          companyId={companyId}
+          data={data}
+          item={editingItem}
+          onSaved={() => {
+            setEditingItem(null);
+            window.dispatchEvent(new CustomEvent("marcia:finance-updated"));
+          }}
+        />
+      )}
+      <AlertDialog
+        open={Boolean(deletingItem)}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeletingItem(null);
+        }}
+      >
+        <AlertDialogContent className="rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover este lançamento?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Ele sairá do extrato e dos cálculos, mas ficará marcado como cancelado para preservar
+              o histórico e ajustar o saldo da conta. Se estiver ligado a uma ordem de serviço, a
+              ordem continuará registrada.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleting}
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmDelete();
+              }}
+            >
+              {deleting ? "Removendo…" : "Remover lançamento"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -142,9 +224,11 @@ function NewTransactionDialog({
   const [amountCents, setAmountCents] = useState<number | null>(null);
   const [date, setDate] = useState(() => toIsoDate(new Date()));
   const [categoryId, setCategoryId] = useState("none");
-  const [paymentMethod, setPaymentMethod] = useState("pix");
+  const [paymentMethod, setPaymentMethod] = useState("nao_informado");
   const [note, setNote] = useState("");
-  const categories = data.categories.filter((c) => c.type === type || c.type === "ambos");
+  const categories = data.categories.filter(
+    (c) => c.active && (c.type === type || c.type === "ambos"),
+  );
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -162,7 +246,7 @@ function NewTransactionDialog({
           amountCents,
           date,
           categoryId: categoryId === "none" ? null : categoryId,
-          paymentMethod,
+          paymentMethod: paymentMethod === "nao_informado" ? null : paymentMethod,
           merchant: merchant || null,
           note: note || null,
           status: "pago",
@@ -174,9 +258,9 @@ function NewTransactionDialog({
       setDescription("");
       setMerchant("");
       setAmountCents(null);
+      setPaymentMethod("nao_informado");
       setNote("");
       onCreated();
-      window.dispatchEvent(new CustomEvent("marcia:finance-updated"));
     } catch (error: any) {
       toast.error(error?.message || "Não foi possível salvar.");
     } finally {
@@ -276,6 +360,7 @@ function NewTransactionDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="nao_informado">Não informada</SelectItem>
                   {Object.entries(PAYMENT_METHOD_LABELS).map(([value, label]) => (
                     <SelectItem key={value} value={value}>
                       {label}
@@ -283,6 +368,9 @@ function NewTransactionDialog({
                   ))}
                 </SelectContent>
               </Select>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Selecione Pix, cartão, dinheiro ou outra forma. O app não marca Pix por padrão.
+              </p>
             </div>
           </div>
           <div>

@@ -3,10 +3,13 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   ChevronDown,
+  Pencil,
   Paperclip,
   Search,
   SlidersHorizontal,
+  Trash2,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -77,12 +80,16 @@ export function TransactionsView({
   onPeriodChange,
   loading,
   emptyState,
+  onEdit,
+  onDelete,
 }: {
   items: FinanceTransactionDetail[];
   period: FinancePeriod;
   onPeriodChange: (period: FinancePeriod) => void;
   loading?: boolean;
   emptyState?: ReactNode;
+  onEdit?: (item: FinanceTransactionDetail) => void;
+  onDelete?: (item: FinanceTransactionDetail) => void;
 }) {
   const [filters, setFilters] = useState<Filters>({
     query: "",
@@ -210,7 +217,12 @@ export function TransactionsView({
                     <div className="truncate text-sm font-bold">{item.description}</div>
                     <div className="truncate text-[11px] text-muted-foreground">
                       {formatDate(item.date)}
-                      {item.time ? ` · ${item.time}` : ""} · {item.category || "Sem categoria"}
+                      {item.occurredDate && item.occurredDate !== item.date
+                        ? ` · ocorrência ${formatDate(item.occurredDate)}${item.time ? ` ${item.time}` : ""}`
+                        : item.time
+                          ? ` · ${item.time}`
+                          : ""}{" "}
+                      · {item.category || "Sem categoria"}
                     </div>
                     <div className="mt-1 flex flex-wrap gap-1">
                       <StatusPill
@@ -230,7 +242,9 @@ export function TransactionsView({
                   </div>
                   <Amount item={item} />
                 </button>
-                {openId === item.id && <Details item={item} today={today} />}
+                {openId === item.id && (
+                  <Details item={item} today={today} onEdit={onEdit} onDelete={onDelete} />
+                )}
               </article>
             ))}
           </div>
@@ -240,7 +254,7 @@ export function TransactionsView({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-[10px] font-extrabold uppercase tracking-[.12em] text-muted-foreground">
-                  <th className="px-4 py-2.5">Data</th>
+                  <th className="px-4 py-2.5">Competência</th>
                   <th className="px-2 py-2.5">Descrição</th>
                   <th className="px-2 py-2.5">Categoria</th>
                   <th className="px-2 py-2.5">Pagamento</th>
@@ -262,6 +276,9 @@ export function TransactionsView({
                         <td className="whitespace-nowrap px-4 py-2.5">
                           <div className="font-semibold">{formatDate(item.date)}</div>
                           <div className="text-[11px] text-muted-foreground">
+                            {item.occurredDate && item.occurredDate !== item.date
+                              ? `Ocorrida ${formatDate(item.occurredDate)} · `
+                              : ""}
                             {item.time || "—"}
                           </div>
                         </td>
@@ -317,15 +334,31 @@ export function TransactionsView({
                           <Amount item={item} />
                         </td>
                         <td className="pr-3">
-                          <ChevronDown
-                            className={`size-4 text-muted-foreground transition ${open ? "rotate-180" : ""}`}
-                          />
+                          <button
+                            type="button"
+                            aria-expanded={open}
+                            aria-label={`${open ? "Fechar" : "Abrir"} detalhes de ${item.description}`}
+                            className="grid size-8 place-items-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setOpenId(open ? null : item.id);
+                            }}
+                          >
+                            <ChevronDown
+                              className={`size-4 text-muted-foreground transition ${open ? "rotate-180" : ""}`}
+                            />
+                          </button>
                         </td>
                       </tr>
                       {open && (
                         <tr className="border-b border-border bg-muted/20">
                           <td colSpan={8}>
-                            <Details item={item} today={today} />
+                            <Details
+                              item={item}
+                              today={today}
+                              onEdit={onEdit}
+                              onDelete={onDelete}
+                            />
                           </td>
                         </tr>
                       )}
@@ -392,9 +425,19 @@ function Chip({ children }: { children: ReactNode }) {
   );
 }
 
-function Details({ item, today }: { item: FinanceTransactionDetail; today: string }) {
+function Details({
+  item,
+  today,
+  onEdit,
+  onDelete,
+}: {
+  item: FinanceTransactionDetail;
+  today: string;
+  onEdit?: (item: FinanceTransactionDetail) => void;
+  onDelete?: (item: FinanceTransactionDetail) => void;
+}) {
   const rows: Array<[string, string]> = [
-    ["Data", formatDate(item.date)],
+    ["Competência", formatDate(item.date)],
     ["Hora", item.time || "Não informada"],
     ["Tipo", item.type === "receita" ? "Entrada" : "Saída"],
     ["Descrição", item.description],
@@ -411,6 +454,8 @@ function Details({ item, today }: { item: FinanceTransactionDetail; today: strin
     ["Origem", sourceLabel(item.source, item.hasAttachment)],
     ["Status", statusLabel(item.type, item.status, item.dueDate || item.date, today)],
   ];
+  if (item.occurredDate && item.occurredDate !== item.date)
+    rows.push(["Data da ocorrência", formatDate(item.occurredDate)]);
   if (item.dueDate) rows.push(["Vencimento", formatDate(item.dueDate)]);
   if (item.paidAt)
     rows.push([item.type === "receita" ? "Recebido em" : "Pago em", formatDate(item.paidAt)]);
@@ -443,6 +488,43 @@ function Details({ item, today }: { item: FinanceTransactionDetail; today: strin
           </div>
         )}
       </dl>
+      {(onEdit || onDelete) && (
+        <div className="mt-3 flex flex-wrap justify-end gap-2">
+          {onEdit && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="rounded-lg"
+              onClick={(event) => {
+                event.stopPropagation();
+                onEdit(item);
+              }}
+            >
+              <Pencil className="size-3.5" /> Editar
+            </Button>
+          )}
+          {onDelete && !item.cardLinked && (
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              className="rounded-lg"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete(item);
+              }}
+            >
+              <Trash2 className="size-3.5" /> Excluir
+            </Button>
+          )}
+          {onDelete && item.cardLinked && (
+            <p className="self-center text-xs text-muted-foreground">
+              Exclusão bloqueada: lançamento vinculado a uma fatura de cartão.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
