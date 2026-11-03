@@ -87,10 +87,15 @@ export function FinanceOverview({
       <section className="grid grid-cols-2 gap-2.5 xl:grid-cols-4" aria-label="Indicadores">
         <Metric
           icon={Scale}
-          label="Saldo do período"
-          value={money(totals.netCents)}
-          helper="entrou menos saiu"
-          tone={totals.netCents >= 0 ? "brand" : "rose"}
+          label="Saldo disponível"
+          value={money(totals.availableCents)}
+          helper={
+            <span className="block space-y-0.5 leading-tight">
+              <span className="block">Saldo anterior: {money(totals.openingBalanceCents)}</span>
+              <span className="block">Saldo do período: {money(totals.netCents)}</span>
+            </span>
+          }
+          tone={totals.availableCents >= 0 ? "cyan" : "amber"}
         />
         <Metric
           icon={ArrowDownLeft}
@@ -173,7 +178,7 @@ function Metric({
   icon: any;
   label: string;
   value: string;
-  helper: string;
+  helper: ReactNode;
   tone: keyof typeof TONES;
 }) {
   return (
@@ -187,14 +192,14 @@ function Metric({
       <div className="mt-2 truncate font-display text-lg font-black tracking-[-.03em] sm:text-xl">
         {value}
       </div>
-      <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{helper}</div>
+      <div className="mt-0.5 text-[10px] text-muted-foreground">{helper}</div>
     </div>
   );
 }
 
 function Evolution({ data, links }: { data: FinanceOverviewData; links: FinanceLinks }) {
   const chart = useMemo(() => {
-    let balance = 0;
+    let balance = data.totals.openingBalanceCents;
     return data.cashflow.map((item) => {
       balance += item.netCents;
       return {
@@ -204,7 +209,7 @@ function Evolution({ data, links }: { data: FinanceOverviewData; links: FinanceL
         saldo: balance / 100,
       };
     });
-  }, [data.cashflow]);
+  }, [data.cashflow, data.totals.openingBalanceCents]);
   const interval = Math.max(0, Math.ceil(chart.length / 7) - 1);
   return (
     <div className="rounded-2xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">

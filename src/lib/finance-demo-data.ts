@@ -6,6 +6,7 @@ import type {
   FinancePlannerItem,
   FinanceTransactionDetail,
 } from "./finance-dashboard.functions";
+import { calculateFinanceBalance } from "./finance-balance";
 import { addDays, daysBetween, isWithin, toIsoDate } from "./finance-period";
 
 const CATEGORIES: Record<string, string> = {
@@ -502,14 +503,25 @@ export function buildDemoSnapshot(
   "period" | "totals" | "cashflow" | "categories" | "upcoming" | "latest" | "insight"
 > {
   const rows = transactions.filter((t) => isWithin(t.date, period.from, period.to));
-  const sum = (pred: (t: FinanceTransactionDetail) => boolean) =>
-    rows.filter(pred).reduce((acc, t) => acc + t.amountCents, 0);
-  const receivedCents = sum((t) => t.type === "receita" && t.status === "pago");
-  const spentCents = sum((t) => t.type === "despesa" && t.status === "pago");
-  const pendingIncomeCents = sum((t) => t.type === "receita" && t.status !== "pago");
-  const pendingExpenseCents = sum((t) => t.type === "despesa" && t.status !== "pago");
-  const netCents = receivedCents - spentCents;
-  const leftoverCents = netCents + pendingIncomeCents - pendingExpenseCents;
+  const balance = calculateFinanceBalance(
+    transactions.map((transaction) => ({
+      type: transaction.type,
+      status: transaction.status,
+      amountCents: transaction.amountCents,
+      competence: transaction.date,
+    })),
+    period,
+  );
+  const {
+    openingBalanceCents,
+    availableCents,
+    receivedCents,
+    spentCents,
+    netCents,
+    pendingIncomeCents,
+    pendingExpenseCents,
+    leftoverCents,
+  } = balance;
   const byCategory = new Map<string, number>();
   rows
     .filter((t) => t.type === "despesa" && t.status === "pago")
@@ -554,6 +566,8 @@ export function buildDemoSnapshot(
     period,
     totals: {
       balanceCents: netCents,
+      openingBalanceCents,
+      availableCents,
       receivedCents,
       spentCents,
       netCents,

@@ -2,12 +2,19 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { addDays, daysBetween, isIsoDate, sanitizeRange, toIsoDate } from "./finance-period";
+import {
+  calculateFinanceBalance,
+  loadFinanceRows,
+  type FinanceBalanceEntry,
+} from "./finance-balance";
 
 export type FinanceDashboardSnapshot = {
   month: string;
   period: { from: string; to: string };
   totals: {
     balanceCents: number;
+    openingBalanceCents: number;
+    availableCents: number;
     receivedCents: number;
     spentCents: number;
     netCents: number;
@@ -207,8 +214,18 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
     );
     if (seedError) throw new Error(seedError.message);
 
-    const [transactions, upcomingRows, accounts, categories, budgets, cards, invoices, goals] =
-      await Promise.all([
+    const [
+      transactions,
+      historicalTransactions,
+      upcomingRows,
+      accounts,
+      categories,
+      budgets,
+      cards,
+      invoices,
+      goals,
+    ] = await Promise.all([
+      loadFinanceRows<any>(({ from: pageFrom, to: pageTo }) =>
         db
           .from("fin_lancamento")
           .select(
@@ -220,78 +237,92 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
           .lte("competencia", to)
           .order("competencia", { ascending: false })
           .order("created_at", { ascending: false })
-          .limit(5000),
+          .order("id", { ascending: false })
+          .range(pageFrom, pageTo),
+      ),
+      loadFinanceRows<any>(({ from: pageFrom, to: pageTo }) =>
         db
           .from("fin_lancamento")
-          .select("id,tipo,descricao,valor_cents,status,vencimento")
+          .select("id,tipo,valor_cents,status,competencia,created_at")
           .eq("company_id", data.companyId)
-          .in("status", ["pendente", "atrasado"])
-          .lte("vencimento", next14)
-          .order("vencimento")
-          .limit(8),
-        db
-          .from("fin_conta")
-          .select("id,nome,instituicao,tipo,saldo_cents,cor")
-          .eq("company_id", data.companyId)
-          .eq("ativo", true)
-          .order("nome"),
-        db
-          .from("fin_categoria")
-          .select("id,nome,tipo,cor")
-          .eq("company_id", data.companyId)
-          .eq("ativo", true),
-        db
-          .from("fin_orcamento")
-          .select("id,categoria_id,limite_cents,competencia")
-          .eq("company_id", data.companyId)
-          .eq("competencia", `${budgetMonth}-01`),
-        db
-          .from("fin_cartao")
-          .select("id,nome,ultimos_quatro,cor,limite_cents")
-          .eq("company_id", data.companyId)
-          .eq("ativo", true),
-        db
-          .from("fin_fatura")
-          .select("id,cartao_id,total_cents,vencimento_em,status")
-          .eq("company_id", data.companyId)
-          .in("status", ["aberta", "fechada", "atrasada"]),
-        db
-          .from("fin_meta")
-          .select("id,nome,objetivo_cents,acumulado_cents,prazo,cor,status")
-          .eq("company_id", data.companyId)
-          .eq("status", "ativa")
-          .order("created_at"),
-      ]);
+          .eq("status", "pago")
+          .lt("competencia", from)
+          .order("competencia", { ascending: true })
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(pageFrom, pageTo),
+      ),
+      db
+        .from("fin_lancamento")
+        .select("id,tipo,descricao,valor_cents,status,vencimento")
+        .eq("company_id", data.companyId)
+        .in("status", ["pendente", "atrasado"])
+        .lte("vencimento", next14)
+        .order("vencimento")
+        .limit(8),
+      db
+        .from("fin_conta")
+        .select("id,nome,instituicao,tipo,saldo_cents,cor")
+        .eq("company_id", data.companyId)
+        .eq("ativo", true)
+        .order("nome"),
+      db
+        .from("fin_categoria")
+        .select("id,nome,tipo,cor")
+        .eq("company_id", data.companyId)
+        .eq("ativo", true),
+      db
+        .from("fin_orcamento")
+        .select("id,categoria_id,limite_cents,competencia")
+        .eq("company_id", data.companyId)
+        .eq("competencia", `${budgetMonth}-01`),
+      db
+        .from("fin_cartao")
+        .select("id,nome,ultimos_quatro,cor,limite_cents")
+        .eq("company_id", data.companyId)
+        .eq("ativo", true),
+      db
+        .from("fin_fatura")
+        .select("id,cartao_id,total_cents,vencimento_em,status")
+        .eq("company_id", data.companyId)
+        .in("status", ["aberta", "fechada", "atrasada"]),
+      db
+        .from("fin_meta")
+        .select("id,nome,objetivo_cents,acumulado_cents,prazo,cor,status")
+        .eq("company_id", data.companyId)
+        .eq("status", "ativa")
+        .order("created_at"),
+    ]);
 
-    const failed = [
-      transactions,
-      upcomingRows,
-      accounts,
-      categories,
-      budgets,
-      cards,
-      invoices,
-      goals,
-    ].find((result) => result.error)?.error;
+    const failed = [upcomingRows, accounts, categories, budgets, cards, invoices, goals].find(
+      (result) => result.error,
+    )?.error;
     if (failed) throw new Error(failed.message);
 
-    const rows = transactions.data || [];
-    const sumWhere = (predicate: (row: any) => boolean) =>
-      rows.filter(predicate).reduce((sum: number, row: any) => sum + cents(row.valor_cents), 0);
-    const receivedCents = sumWhere((row) => row.tipo === "receita" && row.status === "pago");
-    const spentCents = sumWhere((row) => row.tipo === "despesa" && row.status === "pago");
-    const pendingIncomeCents = sumWhere(
-      (row) => row.tipo === "receita" && ["pendente", "atrasado"].includes(row.status),
+    const rows = transactions;
+    const balanceEntries: FinanceBalanceEntry[] = [...historicalTransactions, ...rows].map(
+      (row: any) => ({
+        type: row.tipo,
+        status: row.status,
+        amountCents: cents(row.valor_cents),
+        competence: String(row.competencia).slice(0, 10),
+      }),
     );
-    const pendingExpenseCents = sumWhere(
-      (row) => row.tipo === "despesa" && ["pendente", "atrasado"].includes(row.status),
-    );
+    const calculatedBalance = calculateFinanceBalance(balanceEntries, { from, to });
+    const {
+      receivedCents,
+      spentCents,
+      netCents,
+      openingBalanceCents,
+      availableCents,
+      pendingIncomeCents,
+      pendingExpenseCents,
+      leftoverCents,
+    } = calculatedBalance;
     const balanceCents = (accounts.data || []).reduce(
       (sum: number, row: any) => sum + cents(row.saldo_cents),
       0,
     );
-    const netCents = receivedCents - spentCents;
-    const leftoverCents = netCents + pendingIncomeCents - pendingExpenseCents;
 
     const categoryById = new Map((categories.data || []).map((row: any) => [row.id, row] as const));
     const categorySpend = new Map<string, number>();
@@ -357,7 +388,7 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
       (invoices.data || []).map((row: any) => [row.cartao_id, row] as const),
     );
     const topCategory = categoryList[0];
-    const projectedCents = balanceCents + pendingIncomeCents - pendingExpenseCents;
+    const projectedCents = leftoverCents;
     const insight = topCategory
       ? {
           title: `${topCategory.name} lidera seus gastos`,
@@ -381,6 +412,8 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
       period: { from, to },
       totals: {
         balanceCents,
+        openingBalanceCents,
+        availableCents,
         receivedCents,
         spentCents,
         netCents,
@@ -991,9 +1024,7 @@ export const finishFinanceOnboarding = createServerFn({ method: "POST" })
         .trim()
         .slice(0, 120);
       const balanceCents = Number(input?.balanceCents || 0);
-      const goal = ["control", "save", "clarity"].includes(input?.goal)
-        ? input.goal
-        : "control";
+      const goal = ["control", "save", "clarity"].includes(input?.goal) ? input.goal : "control";
       if (!companyId) throw new Error("Conta não informada.");
       if (!Number.isSafeInteger(balanceCents)) throw new Error("Saldo inicial inválido.");
       return {
@@ -1043,7 +1074,7 @@ export const finishFinanceOnboarding = createServerFn({ method: "POST" })
     const { error: seedError } = await (context.supabase as any).rpc(
       "seed_finance_personal_categories",
       {
-      _company_id: data.companyId,
+        _company_id: data.companyId,
       },
     );
     if (seedError) throw new Error(seedError.message);

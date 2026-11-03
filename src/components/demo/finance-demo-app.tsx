@@ -4,6 +4,10 @@ import { Mic, Sparkles } from "lucide-react";
 import { useBrand } from "@/contexts/brand-context";
 import { Button } from "@/components/ui/button";
 import { LoadingBlocks, PageHeader } from "@/components/marcia/page-kit";
+import {
+  FinanceCategoryDialog,
+  type FinanceCategoryItem,
+} from "@/components/finance/finance-category-dialog";
 import { FinanceOverview } from "@/components/finance/finance-overview";
 import { TransactionsView } from "@/components/finance/transactions-view";
 import { PlannerView } from "@/components/finance/planner-view";
@@ -17,6 +21,7 @@ import {
   buildDemoTransactions,
 } from "@/lib/finance-demo-data";
 import { resolveFinancePeriod, toIsoDate, type FinancePeriod } from "@/lib/finance-period";
+import type { FinanceCategoryDraft } from "@/lib/finance-category-rules";
 
 const links = financeLinks("demo");
 
@@ -83,10 +88,39 @@ function DemoMovements() {
   const branding = useBrand();
   const transactions = useDemoTransactions();
   const [period, setPeriod] = useState<FinancePeriod>(() => resolveFinancePeriod("this_month"));
+  const [customCategories, setCustomCategories] = useState<FinanceCategoryItem[]>([]);
+  const categories = useMemo(() => {
+    const byName = new Map<string, FinanceCategoryItem>();
+    for (const transaction of transactions) {
+      if (!transaction.category) continue;
+      byName.set(transaction.category, {
+        id: `demo-seed-${transaction.category}`,
+        name: transaction.category,
+        color: transaction.categoryColor || "#94A3B8",
+        type: "ambos",
+      });
+    }
+    return [...byName.values(), ...customCategories];
+  }, [transactions, customCategories]);
   const items = useMemo(
     () => transactions.filter((t) => t.date >= period.from && t.date <= period.to),
     [transactions, period],
   );
+  async function saveDemoCategory(draft: FinanceCategoryDraft): Promise<FinanceCategoryItem> {
+    const normalizedName = draft.name.toLocaleLowerCase("pt-BR");
+    if (
+      categories.some(
+        (category) =>
+          category.name.toLocaleLowerCase("pt-BR") === normalizedName &&
+          (category.type === draft.type || category.type === "ambos"),
+      )
+    ) {
+      throw new Error("Já existe uma categoria com esse nome nesta demonstração.");
+    }
+    const created = { id: `demo-category-${draft.type}-${Date.now()}`, ...draft };
+    setCustomCategories((current) => [...current, created]);
+    return created;
+  }
   return (
     <div className="space-y-4">
       <PageHeader
@@ -94,11 +128,14 @@ function DemoMovements() {
         title="Movimentações"
         description="Tudo que entrou pelo chat, WhatsApp, foto ou registro manual, com todos os detalhes."
         action={
-          <Button asChild size="sm" variant="outline" className="rounded-xl">
-            <Link to={links.chat}>
-              <Mic /> Registrar falando com {branding.assistantName}
-            </Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <FinanceCategoryDialog categories={categories} onSave={saveDemoCategory} />
+            <Button asChild size="sm" variant="outline" className="rounded-xl">
+              <Link to={links.chat}>
+                <Mic /> Registrar falando com {branding.assistantName}
+              </Link>
+            </Button>
+          </div>
         }
       />
       <TransactionsView items={items} period={period} onPeriodChange={setPeriod} />

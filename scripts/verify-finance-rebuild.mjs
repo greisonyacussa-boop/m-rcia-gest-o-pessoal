@@ -101,7 +101,7 @@ assert.doesNotMatch(onboarding, /serviço|agenda|profissional/i);
 assert.match(dashboard, /FinanceOverview/);
 assert.match(dashboard, /useFinanceDashboard\(ctx\.company\?\.id, period\)/);
 for (const label of [
-  "Saldo do período",
+  "Saldo disponível",
   "Entrou",
   "Saiu",
   "Sobra prevista",
@@ -111,9 +111,11 @@ for (const label of [
   assert.match(overview, new RegExp(`"${label}"|>${label}<|${label}`));
 }
 assert.ok(
-  overview.indexOf("Saldo do período") < overview.indexOf("insight.title"),
+  overview.indexOf("Saldo disponível") < overview.indexOf("insight.title"),
   "Os indicadores financeiros precisam aparecer antes da leitura da IA.",
 );
+assert.match(overview, /Saldo anterior:/);
+assert.match(dashboardFunctions, /openingBalanceCents/);
 assert.match(transactions, /Forma de pagamento/);
 assert.match(transactions, /Observação/);
 assert.match(transactions, /md:hidden/);

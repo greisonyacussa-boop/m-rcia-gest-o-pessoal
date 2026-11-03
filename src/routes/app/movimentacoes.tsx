@@ -2,7 +2,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { Mic, Plus } from "lucide-react";
+import { Mic, Plus, Tags } from "lucide-react";
 import { toast } from "sonner";
 import { brandedRouteHead } from "@/config/brand";
 import { useBrand } from "@/contexts/brand-context";
@@ -39,6 +39,10 @@ import {
 } from "@/components/ui/select";
 import { FinanceEmpty, FinanceError, FinanceLoading } from "@/components/finance/finance-states";
 import { EditTransactionDialog } from "@/components/finance/edit-transaction-dialog";
+import {
+  FinanceCategoryDialog,
+  type FinanceCategoryItem,
+} from "@/components/finance/finance-category-dialog";
 import { TransactionsView } from "@/components/finance/transactions-view";
 import {
   addFinanceTransaction,
@@ -46,6 +50,11 @@ import {
   listFinanceTransactions,
   type FinanceTransactionDetail,
 } from "@/lib/finance-dashboard.functions";
+import { createFinanceCategory } from "@/lib/finance-categories.functions";
+import {
+  canManageFinanceCategories,
+  type FinanceCategoryDraft,
+} from "@/lib/finance-category-rules";
 import {
   PAYMENT_METHOD_LABELS,
   resolveFinancePeriod,
@@ -70,6 +79,8 @@ function TransactionsPage() {
   const companyId = ctx.company?.id;
   const list = useServerFn(listFinanceTransactions);
   const cancel = useServerFn(cancelFinanceTransaction);
+  const createCategory = useServerFn(createFinanceCategory);
+  const canManageCategories = canManageFinanceCategories(ctx.membership?.role);
   const [period, setPeriod] = useState<FinancePeriod>(() => resolveFinancePeriod("this_month"));
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -90,6 +101,27 @@ function TransactionsPage() {
       setLoading(false);
     }
   }, [companyId, list, period.from, period.to]);
+
+  const saveCategory = useCallback(
+    async (draft: FinanceCategoryDraft): Promise<FinanceCategoryItem> => {
+      if (!companyId) throw new Error("Empresa não informada.");
+      const created = await createCategory({ data: { companyId, ...draft } });
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              categories: [
+                ...current.categories.filter((category) => category.id !== created.id),
+                { ...created, active: true },
+              ],
+            }
+          : current,
+      );
+      window.dispatchEvent(new CustomEvent("marcia:finance-updated"));
+      return created;
+    },
+    [companyId, createCategory],
+  );
 
   useEffect(() => {
     void refresh();
@@ -122,6 +154,17 @@ function TransactionsPage() {
         description="Tudo que entrou pelo chat, WhatsApp, foto ou registro manual, com todos os detalhes."
         action={
           <div className="flex flex-wrap gap-2">
+            {canManageCategories && data ? (
+              <FinanceCategoryDialog
+                categories={data.categories}
+                onSave={saveCategory}
+                trigger={
+                  <Button type="button" size="sm" variant="outline" className="rounded-xl">
+                    <Tags /> Categorias
+                  </Button>
+                }
+              />
+            ) : null}
             <Button asChild size="sm" variant="outline" className="rounded-xl">
               <Link to="/app/marcia">
                 <Mic /> Registrar falando
@@ -131,6 +174,8 @@ function TransactionsPage() {
               <NewTransactionDialog
                 companyId={companyId}
                 data={data}
+                canManageCategories={canManageCategories}
+                onCategoryCreated={saveCategory}
                 onCreated={() => window.dispatchEvent(new CustomEvent("marcia:finance-updated"))}
               />
             )}
@@ -209,10 +254,14 @@ function TransactionsPage() {
 function NewTransactionDialog({
   companyId,
   data,
+  canManageCategories,
+  onCategoryCreated,
   onCreated,
 }: {
   companyId: string;
   data: Payload;
+  canManageCategories: boolean;
+  onCategoryCreated: (draft: FinanceCategoryDraft) => Promise<FinanceCategoryItem>;
   onCreated: () => void;
 }) {
   const add = useServerFn(addFinanceTransaction);
@@ -338,7 +387,31 @@ function NewTransactionDialog({
               />
             </div>
             <div>
-              <Label>Categoria</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label>Categoria</Label>
+                {canManageCategories ? (
+                  <FinanceCategoryDialog
+                    categories={data.categories}
+                    fixedType={type}
+                    onSave={async (draft) => {
+                      const created = await onCategoryCreated(draft);
+                      setCategoryId(created.id);
+                      return created;
+                    }}
+                    title={`Nova categoria de ${type === "receita" ? "entrada" : "saída"}`}
+                    description="Ela ficará selecionada neste lançamento sem apagar os outros campos."
+                    trigger={
+                      <Button
+                        type="button"
+                        variant="link"
+                        className="h-auto px-0 text-xs font-extrabold text-[color:var(--brand-text)]"
+                      >
+                        <Plus /> Nova categoria
+                      </Button>
+                    }
+                  />
+                ) : null}
+              </div>
               <Select value={categoryId} onValueChange={setCategoryId}>
                 <SelectTrigger className="mt-1 h-10 rounded-xl">
                   <SelectValue />
