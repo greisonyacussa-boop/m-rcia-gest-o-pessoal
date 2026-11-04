@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { ClientOnly, Link } from "@tanstack/react-router";
-import { Mic, Sparkles } from "lucide-react";
+import { CreditCard, Mic, Sparkles } from "lucide-react";
 import { useBrand } from "@/contexts/brand-context";
 import { Button } from "@/components/ui/button";
 import { LoadingBlocks, PageHeader } from "@/components/marcia/page-kit";
@@ -8,7 +8,7 @@ import {
   FinanceCategoryDialog,
   type FinanceCategoryItem,
 } from "@/components/finance/finance-category-dialog";
-import { FinanceOverview } from "@/components/finance/finance-overview";
+import { FinanceOverview, money } from "@/components/finance/finance-overview";
 import { TransactionsView } from "@/components/finance/transactions-view";
 import { PlannerView } from "@/components/finance/planner-view";
 import { MarciaChat } from "@/components/finance/marcia-chat";
@@ -31,7 +31,13 @@ function DemoClient({ children }: { children: ReactNode }) {
   return <ClientOnly fallback={<LoadingBlocks count={6} />}>{children}</ClientOnly>;
 }
 
-function DemoCta() {
+function DemoCta({
+  cardPendingCents = 0,
+  onSimulateCardPayment,
+}: {
+  cardPendingCents?: number;
+  onSimulateCardPayment?: () => void;
+}) {
   return (
     <div className="flex flex-col gap-2 rounded-2xl border border-[color:var(--brand-soft-strong)] bg-[color:var(--brand-soft)] p-3 text-sm sm:flex-row sm:items-center">
       <Sparkles className="size-4 shrink-0 text-[color:var(--brand-text)]" />
@@ -43,6 +49,17 @@ function DemoCta() {
           Criar meu acesso
         </Link>
       </Button>
+      {cardPendingCents > 0 && onSimulateCardPayment && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 rounded-lg"
+          onClick={onSimulateCardPayment}
+        >
+          Simular pagamento do cartão · {money(cardPendingCents)}
+        </Button>
+      )}
     </div>
   );
 }
@@ -61,7 +78,28 @@ export function DemoOverviewPage() {
 
 function DemoOverview() {
   const branding = useBrand();
-  const transactions = useDemoTransactions();
+  const baseTransactions = useDemoTransactions();
+  const [cardPaid, setCardPaid] = useState(false);
+  const paidAt = toIsoDate(new Date());
+  const transactions = useMemo(
+    () =>
+      cardPaid
+        ? baseTransactions.map((transaction) =>
+            transaction.cardSettlement === "pending"
+              ? {
+                  ...transaction,
+                  cardSettlement: "paid" as const,
+                  paidAt,
+                  account: "Conta principal",
+                }
+              : transaction,
+          )
+        : baseTransactions,
+    [baseTransactions, cardPaid, paidAt],
+  );
+  const cardPendingCents = baseTransactions
+    .filter((transaction) => transaction.cardSettlement === "pending")
+    .reduce((total, transaction) => total + transaction.amountCents, 0);
   const [period, setPeriod] = useState<FinancePeriod>(() => resolveFinancePeriod("this_month"));
   const data = useMemo(() => buildDemoSnapshot(transactions, period), [transactions, period]);
   return (
@@ -71,7 +109,12 @@ function DemoOverview() {
       onPeriodChange={setPeriod}
       links={links}
       assistantName={branding.assistantName}
-      banner={<DemoCta />}
+      banner={
+        <DemoCta
+          cardPendingCents={cardPaid ? 0 : cardPendingCents}
+          onSimulateCardPayment={() => setCardPaid(true)}
+        />
+      }
     />
   );
 }
@@ -86,7 +129,28 @@ export function DemoMovementsPage() {
 
 function DemoMovements() {
   const branding = useBrand();
-  const transactions = useDemoTransactions();
+  const baseTransactions = useDemoTransactions();
+  const [cardPaid, setCardPaid] = useState(false);
+  const paidAt = toIsoDate(new Date());
+  const transactions = useMemo(
+    () =>
+      cardPaid
+        ? baseTransactions.map((transaction) =>
+            transaction.cardSettlement === "pending"
+              ? {
+                  ...transaction,
+                  cardSettlement: "paid" as const,
+                  paidAt,
+                  account: "Conta principal",
+                }
+              : transaction,
+          )
+        : baseTransactions,
+    [baseTransactions, cardPaid, paidAt],
+  );
+  const cardPendingCents = baseTransactions
+    .filter((transaction) => transaction.cardSettlement === "pending")
+    .reduce((total, transaction) => total + transaction.amountCents, 0);
   const [period, setPeriod] = useState<FinancePeriod>(() => resolveFinancePeriod("this_month"));
   const [customCategories, setCustomCategories] = useState<FinanceCategoryItem[]>([]);
   const categories = useMemo(() => {
@@ -130,6 +194,17 @@ function DemoMovements() {
         action={
           <div className="flex flex-wrap gap-2">
             <FinanceCategoryDialog categories={categories} onSave={saveDemoCategory} />
+            {cardPendingCents > 0 && !cardPaid && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="rounded-xl"
+                onClick={() => setCardPaid(true)}
+              >
+                <CreditCard /> Simular pagamento · {money(cardPendingCents)}
+              </Button>
+            )}
             <Button asChild size="sm" variant="outline" className="rounded-xl">
               <Link to={links.chat}>
                 <Mic /> Registrar falando com {branding.assistantName}

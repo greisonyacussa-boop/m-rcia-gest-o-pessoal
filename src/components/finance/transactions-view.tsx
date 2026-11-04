@@ -71,6 +71,8 @@ const STATUS_STYLES: Record<string, string> = {
   Recebido: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300",
   Previsto: "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300",
   Vencido: "bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300",
+  "Cartão a pagar": "bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-300",
+  "Cartão pago": "bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-300",
 };
 
 /** Extrato detalhado — compartilhado entre o painel real e a demonstração. */
@@ -113,10 +115,13 @@ export function TransactionsView({
       visible.reduce(
         (acc, item) => {
           if (item.type === "receita") acc.income += item.amountCents;
-          else acc.expense += item.amountCents;
+          else {
+            acc.expense += item.amountCents;
+            if (item.cardSettlement === "pending") acc.cardPending += item.amountCents;
+          }
           return acc;
         },
-        { income: 0, expense: 0 },
+        { income: 0, expense: 0, cardPending: 0 },
       ),
     [visible],
   );
@@ -182,15 +187,23 @@ export function TransactionsView({
             movimentações
           </span>
           <span>
-            Entrou{" "}
+            Entradas registradas{" "}
             <strong className="text-emerald-700 dark:text-emerald-400">
               {money(totals.income)}
             </strong>
           </span>
           <span>
-            Saiu{" "}
+            Gastos registrados{" "}
             <strong className="text-rose-700 dark:text-rose-400">{money(totals.expense)}</strong>
           </span>
+          {totals.cardPending > 0 && (
+            <span>
+              Cartão a pagar{" "}
+              <strong className="text-violet-700 dark:text-violet-300">
+                {money(totals.cardPending)}
+              </strong>
+            </span>
+          )}
         </div>
       </div>
 
@@ -231,6 +244,7 @@ export function TransactionsView({
                           item.status,
                           item.dueDate || item.date,
                           today,
+                          item.cardSettlement,
                         )}
                       />
                       {item.paymentMethod && (
@@ -327,6 +341,7 @@ export function TransactionsView({
                               item.status,
                               item.dueDate || item.date,
                               today,
+                              item.cardSettlement,
                             )}
                           />
                         </td>
@@ -452,7 +467,10 @@ function Details({
     ],
     ["Conta / carteira / cartão", item.card || item.account || "Não informado"],
     ["Origem", sourceLabel(item.source, item.hasAttachment)],
-    ["Status", statusLabel(item.type, item.status, item.dueDate || item.date, today)],
+    [
+      "Status",
+      statusLabel(item.type, item.status, item.dueDate || item.date, today, item.cardSettlement),
+    ],
   ];
   if (item.occurredDate && item.occurredDate !== item.date)
     rows.push(["Data da ocorrência", formatDate(item.occurredDate)]);

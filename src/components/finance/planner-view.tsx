@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  CreditCard,
   Repeat,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,16 @@ export const STATUS_META: Record<FinanceDayStatus, { label: string; dot: string;
     label: "Vencido",
     dot: "bg-rose-500",
     pill: "bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300",
+  },
+  cartao_pendente: {
+    label: "Cartão a pagar",
+    dot: "bg-violet-500",
+    pill: "bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-300",
+  },
+  cartao_pago: {
+    label: "Cartão pago",
+    dot: "bg-violet-700",
+    pill: "bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-300",
   },
 };
 
@@ -199,6 +210,11 @@ export function PlannerView({
                           {money(Math.abs(s.netCents)).replace("R$", "").trim()}
                         </div>
                       )}
+                      {s.cardPendingCents > 0 && (
+                        <div className="truncate text-[9px] font-black text-violet-700 dark:text-violet-300">
+                          Cartão {money(s.cardPendingCents).replace("R$", "").trim()}
+                        </div>
+                      )}
                     </div>
                   </>
                 )}
@@ -224,6 +240,13 @@ export function PlannerView({
               value={money(monthSummary.expenseCents)}
               className="text-rose-700 dark:text-rose-400"
             />
+            {monthSummary.cardPendingCents > 0 && (
+              <Row
+                label={`Cartão a pagar (${monthSummary.cardPendingCount})`}
+                value={money(monthSummary.cardPendingCents)}
+                className="text-violet-700 dark:text-violet-300"
+              />
+            )}
             <Row
               label={`${monthSummary.pendingCount} compromisso(s) pendente(s)`}
               value={money(monthSummary.pendingCents)}
@@ -339,7 +362,7 @@ function DayDialog({
             Resumo do dia e tudo que está registrado ou previsto.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat
             label="Entrou"
             value={money(s.incomeCents)}
@@ -349,6 +372,11 @@ function DayDialog({
             label="Saiu"
             value={money(s.expenseCents)}
             className="text-rose-700 dark:text-rose-400"
+          />
+          <Stat
+            label="Cartão a pagar"
+            value={money(s.cardPendingCents)}
+            className="text-violet-700 dark:text-violet-300"
           />
           <Stat
             label="Saldo do dia"
@@ -375,10 +403,12 @@ function DayDialog({
                     className="flex items-start gap-2.5 rounded-xl border border-border p-2.5"
                   >
                     <span
-                      className={`grid size-8 shrink-0 place-items-center rounded-lg ${item.type === "receita" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"}`}
+                      className={`grid size-8 shrink-0 place-items-center rounded-lg ${item.type === "receita" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : item.cardSettlement === "pending" ? "bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300" : "bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"}`}
                     >
                       {item.type === "receita" ? (
                         <ArrowDownLeft className="size-3.5" />
+                      ) : item.cardSettlement === "pending" ? (
+                        <CreditCard className="size-3.5" />
                       ) : (
                         <ArrowUpRight className="size-3.5" />
                       )}
@@ -411,7 +441,12 @@ function DayDialog({
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-black tabular-nums">
-                        {item.type === "receita" ? "+" : "−"} {money(item.amountCents)}
+                        {item.cardSettlement === "pending"
+                          ? "Cartão · "
+                          : item.type === "receita"
+                            ? "+"
+                            : "−"}{" "}
+                        {money(item.amountCents)}
                       </div>
                       <span
                         className={`mt-1 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-extrabold ${STATUS_META[st].pill}`}

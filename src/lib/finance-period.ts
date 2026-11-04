@@ -98,12 +98,25 @@ export function formatPeriodLabel(period: { from: string; to: string }) {
 }
 
 /** Situação visual de um compromisso/movimentação no calendário. */
-export type FinanceDayStatus = "pago" | "recebido" | "previsto" | "vencido";
+export type FinanceDayStatus =
+  | "pago"
+  | "recebido"
+  | "previsto"
+  | "vencido"
+  | "cartao_pendente"
+  | "cartao_pago";
 
 export function financeDayStatus(
-  item: { type: "receita" | "despesa"; status: string; date: string },
+  item: {
+    type: "receita" | "despesa";
+    status: string;
+    date: string;
+    cardSettlement?: "pending" | "paid" | null;
+  },
   today: string,
 ): FinanceDayStatus {
+  if (item.cardSettlement === "pending") return "cartao_pendente";
+  if (item.cardSettlement === "paid") return "cartao_pago";
   if (item.status === "pago") return item.type === "receita" ? "recebido" : "pago";
   if (item.status === "atrasado" || item.date < today) return "vencido";
   return "previsto";
@@ -112,6 +125,9 @@ export function financeDayStatus(
 export type FinanceDaySummary = {
   incomeCents: number;
   expenseCents: number;
+  cardExpenseCents: number;
+  cardPendingCount: number;
+  cardPendingCents: number;
   netCents: number;
   pendingCount: number;
   pendingCents: number;
@@ -119,13 +135,28 @@ export type FinanceDaySummary = {
 
 /** Resumo do dia: só valores efetivados contam em entrou/saiu; o resto é compromisso pendente. */
 export function summarizeFinanceDay(
-  items: Array<{ type: "receita" | "despesa"; status: string; amountCents: number }>,
+  items: Array<{
+    type: "receita" | "despesa";
+    status: string;
+    amountCents: number;
+    paymentMethod?: string | null;
+    cardSettlement?: "pending" | "paid" | null;
+  }>,
 ): FinanceDaySummary {
   let incomeCents = 0;
   let expenseCents = 0;
+  let cardExpenseCents = 0;
+  let cardPendingCount = 0;
+  let cardPendingCents = 0;
   let pendingCount = 0;
   let pendingCents = 0;
   for (const item of items) {
+    if (item.cardSettlement === "pending" && item.type === "despesa") {
+      cardExpenseCents += item.amountCents;
+      cardPendingCount += 1;
+      cardPendingCents += item.amountCents;
+      continue;
+    }
     if (item.status === "pago") {
       if (item.type === "receita") incomeCents += item.amountCents;
       else expenseCents += item.amountCents;
@@ -137,6 +168,9 @@ export function summarizeFinanceDay(
   return {
     incomeCents,
     expenseCents,
+    cardExpenseCents,
+    cardPendingCount,
+    cardPendingCents,
     netCents: incomeCents - expenseCents,
     pendingCount,
     pendingCents,
@@ -172,7 +206,10 @@ export function statusLabel(
   status: string,
   date: string,
   today: string,
+  cardSettlement?: "pending" | "paid" | null,
 ) {
+  if (cardSettlement === "pending") return "Cartão a pagar";
+  if (cardSettlement === "paid") return "Cartão pago";
   const s = financeDayStatus({ type, status, date }, today);
   return s === "pago"
     ? "Pago"

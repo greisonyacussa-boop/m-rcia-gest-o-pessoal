@@ -121,8 +121,15 @@ export function EditTransactionDialog({
           </DialogDescription>
           {item.cardLinked && (
             <p className="text-xs text-muted-foreground">
-              Vinculado a uma fatura de cartão: valor, tipo, competência e forma ficam bloqueados
-              para preservar o total da fatura.
+              {item.cardSettlement === "paid"
+                ? "Cartão já marcado como pago: valor, tipo, competência e forma ficam bloqueados para preservar o saldo da conta."
+                : "Vinculado a uma fatura de cartão: valor, tipo, competência e forma ficam bloqueados para preservar o total da fatura."}
+            </p>
+          )}
+          {item.cardSettlement === "pending" && (
+            <p className="text-xs text-muted-foreground">
+              Esta compra aguarda a quitação do cartão. Tipo e forma ficam bloqueados; para alterar
+              esses dados, cancele e registre o gasto novamente.
             </p>
           )}
         </DialogHeader>
@@ -132,7 +139,7 @@ export function EditTransactionDialog({
               <button
                 type="button"
                 key={value}
-                disabled={Boolean(item.cardLinked)}
+                disabled={Boolean(item.cardLinked || item.cardSettlement === "pending")}
                 aria-pressed={type === value}
                 onClick={() => {
                   const selected = data.categories.find((category) => category.id === categoryId);
@@ -212,7 +219,7 @@ export function EditTransactionDialog({
               <Select
                 value={paymentMethod}
                 onValueChange={setPaymentMethod}
-                disabled={Boolean(item.cardLinked)}
+                disabled={Boolean(item.cardLinked || item.cardSettlement === "pending")}
               >
                 <SelectTrigger className="mt-1 h-10 rounded-xl">
                   <SelectValue />
@@ -228,8 +235,9 @@ export function EditTransactionDialog({
               </Select>
               {item.cardLinked && (
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  Vinculado a uma fatura de cartão; a forma fica bloqueada para preservar essa
-                  relação.
+                  {item.cardSettlement === "paid"
+                    ? "Cartão liquidado; a forma de pagamento fica bloqueada para preservar o saldo."
+                    : "Vinculado a uma fatura de cartão; a forma fica bloqueada para preservar essa relação."}
                 </p>
               )}
             </div>

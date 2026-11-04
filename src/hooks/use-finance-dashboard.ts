@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import {
   getFinanceDashboard,
@@ -13,34 +13,50 @@ export function useFinanceDashboard(
   const [data, setData] = useState<FinanceDashboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const requestSequence = useRef(0);
   const from = period?.from ?? null;
   const to = period?.to ?? null;
 
   const refresh = useCallback(async () => {
-    if (!companyId) return;
+    const requestId = ++requestSequence.current;
+    if (!companyId) {
+      setData(null);
+      setError("");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
-      setData(await getDashboard({ data: { companyId, from, to } }));
+      const next = await getDashboard({ data: { companyId, from, to } });
+      if (requestSequence.current === requestId) setData(next);
     } catch (nextError: unknown) {
-      setError(
-        nextError instanceof Error
-          ? nextError.message
-          : "Não foi possível carregar seus dados financeiros.",
-      );
+      if (requestSequence.current === requestId) {
+        setError(
+          nextError instanceof Error
+            ? nextError.message
+            : "Não foi possível carregar seus dados financeiros.",
+        );
+      }
     } finally {
-      setLoading(false);
+      if (requestSequence.current === requestId) setLoading(false);
     }
   }, [companyId, from, to, getDashboard]);
 
   useEffect(() => {
     void refresh();
+    return () => {
+      requestSequence.current += 1;
+    };
   }, [refresh]);
 
   useEffect(() => {
     const onUpdate = () => void refresh();
     window.addEventListener("marcia:finance-updated", onUpdate);
-    return () => window.removeEventListener("marcia:finance-updated", onUpdate);
+    return () => {
+      requestSequence.current += 1;
+      window.removeEventListener("marcia:finance-updated", onUpdate);
+    };
   }, [refresh]);
 
   return { data, loading, error, refresh };

@@ -6,6 +6,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   CalendarClock,
+  CreditCard,
   Mic,
   PiggyBank,
   Scale,
@@ -84,7 +85,10 @@ export function FinanceOverview({
 
       {banner}
 
-      <section className="grid grid-cols-2 gap-2.5 xl:grid-cols-4" aria-label="Indicadores">
+      <section
+        className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-5"
+        aria-label="Indicadores"
+      >
         <Metric
           icon={Scale}
           label="Saldo disponível"
@@ -92,7 +96,7 @@ export function FinanceOverview({
           helper={
             <span className="block space-y-0.5 leading-tight">
               <span className="block">Saldo anterior: {money(totals.openingBalanceCents)}</span>
-              <span className="block">Saldo do período: {money(totals.netCents)}</span>
+              <span className="block">Movimento em conta: {money(totals.netCents)}</span>
             </span>
           }
           tone={totals.availableCents >= 0 ? "cyan" : "amber"}
@@ -110,7 +114,7 @@ export function FinanceOverview({
         />
         <Metric
           icon={ArrowUpRight}
-          label="Saiu"
+          label="Saiu da conta"
           value={money(totals.spentCents)}
           helper={
             totals.pendingExpenseCents
@@ -118,6 +122,13 @@ export function FinanceOverview({
               : "pagamentos confirmados"
           }
           tone="rose"
+        />
+        <Metric
+          icon={CreditCard}
+          label="No cartão"
+          value={money(totals.cardExpenseCents)}
+          helper="compras na competência"
+          tone="violet"
         />
         <Metric
           icon={PiggyBank}
@@ -166,6 +177,7 @@ const TONES: Record<string, string> = {
   rose: "bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300",
   cyan: "bg-cyan-100 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300",
   amber: "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+  violet: "bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300",
 };
 
 function Metric({
@@ -206,6 +218,7 @@ function Evolution({ data, links }: { data: FinanceOverviewData; links: FinanceL
         label: item.label,
         entradas: item.incomeCents / 100,
         saidas: item.expenseCents / 100,
+        cartao: item.cardExpenseCents / 100,
         saldo: balance / 100,
       };
     });
@@ -216,7 +229,9 @@ function Evolution({ data, links }: { data: FinanceOverviewData; links: FinanceL
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="font-display text-base font-black">Evolução</h2>
-          <p className="text-[11px] text-muted-foreground">{formatPeriodLabel(data.period)}</p>
+          <p className="text-[11px] text-muted-foreground">
+            {formatPeriodLabel(data.period)} · cartão só reduz o saldo quando você marca como pago
+          </p>
         </div>
         <Link
           to={links.transactions}
@@ -236,6 +251,10 @@ function Evolution({ data, links }: { data: FinanceOverviewData; links: FinanceL
               <linearGradient id="ovExpense" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#F43F5E" stopOpacity={0.28} />
                 <stop offset="100%" stopColor="#F43F5E" stopOpacity={0.02} />
+              </linearGradient>
+              <linearGradient id="ovCard" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#8B5CF6" stopOpacity={0.3} />
+                <stop offset="100%" stopColor="#8B5CF6" stopOpacity={0.02} />
               </linearGradient>
             </defs>
             <CartesianGrid vertical={false} stroke="var(--hairline)" strokeDasharray="4 6" />
@@ -266,10 +285,18 @@ function Evolution({ data, links }: { data: FinanceOverviewData; links: FinanceL
             <Area
               type="monotone"
               dataKey="saidas"
-              name="Saiu"
+              name="Saiu da conta"
               stroke="#F43F5E"
               strokeWidth={2}
               fill="url(#ovExpense)"
+            />
+            <Area
+              type="monotone"
+              dataKey="cartao"
+              name="Gasto no cartão"
+              stroke="#8B5CF6"
+              strokeWidth={2}
+              fill="url(#ovCard)"
             />
             <Area
               type="monotone"
@@ -288,12 +315,59 @@ function Evolution({ data, links }: { data: FinanceOverviewData; links: FinanceL
           <i className="size-2 rounded-full bg-emerald-500" /> Entrou
         </span>
         <span className="flex items-center gap-1.5">
-          <i className="size-2 rounded-full bg-rose-500" /> Saiu
+          <i className="size-2 rounded-full bg-rose-500" /> Saiu da conta
+        </span>
+        <span className="flex items-center gap-1.5">
+          <i className="size-2 rounded-full bg-violet-500" /> Gasto no cartão
         </span>
         <span className="flex items-center gap-1.5">
           <i className="size-2 rounded-full bg-[color:var(--brand)]" /> Saldo acumulado
         </span>
       </div>
+      <details className="mt-3 rounded-lg border border-border px-3 py-2 text-xs">
+        <summary className="cursor-pointer font-bold text-muted-foreground">
+          Consultar valores do gráfico em tabela
+        </summary>
+        <div className="mt-2 max-h-56 overflow-auto">
+          <table className="w-full border-collapse text-right">
+            <caption className="sr-only">
+              Entradas, saídas da conta, gastos no cartão e saldo acumulado por dia
+            </caption>
+            <thead>
+              <tr className="border-b border-border text-muted-foreground">
+                <th scope="col" className="py-1 text-left font-bold">
+                  Dia
+                </th>
+                <th scope="col" className="py-1 font-bold">
+                  Entrou
+                </th>
+                <th scope="col" className="py-1 font-bold">
+                  Saiu da conta
+                </th>
+                <th scope="col" className="py-1 font-bold">
+                  No cartão
+                </th>
+                <th scope="col" className="py-1 font-bold">
+                  Saldo
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {chart.map((row) => (
+                <tr key={row.label} className="border-b border-border/60">
+                  <th scope="row" className="py-1 text-left font-semibold">
+                    {row.label}
+                  </th>
+                  <td className="py-1 tabular-nums">{money(Math.round(row.entradas * 100))}</td>
+                  <td className="py-1 tabular-nums">{money(Math.round(row.saidas * 100))}</td>
+                  <td className="py-1 tabular-nums">{money(Math.round(row.cartao * 100))}</td>
+                  <td className="py-1 tabular-nums">{money(Math.round(row.saldo * 100))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </div>
   );
 }
@@ -309,7 +383,7 @@ function Categories({ data }: { data: FinanceOverviewData }) {
   return (
     <div className="rounded-2xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
       <h2 className="font-display text-base font-black">Maiores categorias</h2>
-      <p className="text-[11px] text-muted-foreground">Onde mais saiu dinheiro</p>
+      <p className="text-[11px] text-muted-foreground">Onde mais foram os gastos</p>
       <div className="mt-2 flex items-center gap-4 xl:flex-col xl:items-stretch">
         <div className="relative h-[130px] w-[130px] shrink-0 xl:mx-auto">
           <ResponsiveContainer width="100%" height="100%">
@@ -368,10 +442,12 @@ function Latest({ data, links }: { data: FinanceOverviewData; links: FinanceLink
         {data.latest.slice(0, 6).map((item) => (
           <div key={item.id} className="flex items-center gap-3 py-2.5">
             <div
-              className={`grid size-8 shrink-0 place-items-center rounded-lg ${item.type === "receita" ? TONES.emerald : TONES.rose}`}
+              className={`grid size-8 shrink-0 place-items-center rounded-lg ${item.type === "receita" ? TONES.emerald : item.cardSettlement ? TONES.violet : TONES.rose}`}
             >
               {item.type === "receita" ? (
                 <ArrowDownLeft className="size-3.5" />
+              ) : item.cardSettlement ? (
+                <CreditCard className="size-3.5" />
               ) : (
                 <ArrowUpRight className="size-3.5" />
               )}
@@ -384,12 +460,18 @@ function Latest({ data, links }: { data: FinanceOverviewData; links: FinanceLink
                   day: "2-digit",
                   month: "short",
                 })}
+                {item.cardSettlement === "pending"
+                  ? " · Cartão a pagar"
+                  : item.cardSettlement === "paid"
+                    ? " · Cartão pago"
+                    : ""}
               </div>
             </div>
             <strong
-              className={`text-sm tabular-nums ${item.type === "receita" ? "text-emerald-700 dark:text-emerald-400" : ""}`}
+              className={`text-sm tabular-nums ${item.type === "receita" ? "text-emerald-700 dark:text-emerald-400" : item.cardSettlement ? "text-violet-700 dark:text-violet-300" : ""}`}
             >
-              {item.type === "receita" ? "+" : "−"} {money(item.amountCents)}
+              {item.cardSettlement ? "Cartão · " : item.type === "receita" ? "+" : "−"}{" "}
+              {money(item.amountCents)}
             </strong>
           </div>
         ))}

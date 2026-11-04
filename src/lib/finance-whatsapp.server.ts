@@ -1,5 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { LOVABLE_AI_MODEL } from "./lovable-ai-config";
+import {
+  financeBalanceEntryFromRow,
+  financeCardTransactionMetadata,
+  financeCashSummaryRange,
+  loadFinanceRows,
+  summarizeFinanceCash,
+} from "./finance-balance";
 
 type FinanceIntent =
   | "record_expense"
@@ -324,35 +331,22 @@ FORMATO: {"intent":"...","type":null,"summary":null,"amountCents":null,"category
 }
 
 async function summary(db: any, companyId: string, period: Draft["queryPeriod"]) {
-  const now = new Date();
-  let from: string | null = null;
-  if (period === "today")
-    from = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().slice(0, 10);
-  else if (period === "week") {
-    const start = new Date(now);
-    start.setDate(start.getDate() - 6);
-    from = start.toISOString().slice(0, 10);
-  } else if (period !== "all")
-    from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-  let query = db
-    .from("fin_lancamento")
-    .select("tipo,status,valor_cents")
-    .eq("company_id", companyId)
-    .neq("status", "cancelado");
-  if (from) query = query.gte("competencia", from);
-  const result = await query;
-  if (result.error) throw new Error(result.error.message);
-  const rows = result.data || [];
-  const income = rows
-    .filter((row: any) => row.tipo === "receita" && row.status === "pago")
-    .reduce((sum: number, row: any) => sum + Number(row.valor_cents), 0);
-  const expense = rows
-    .filter((row: any) => row.tipo === "despesa" && row.status === "pago")
-    .reduce((sum: number, row: any) => sum + Number(row.valor_cents), 0);
-  const pending = rows
-    .filter((row: any) => row.tipo === "despesa" && ["pendente", "atrasado"].includes(row.status))
-    .reduce((sum: number, row: any) => sum + Number(row.valor_cents), 0);
-  return `No período, entraram ${money(income)}, saíram ${money(expense)} e há ${money(pending)} para pagar. Resultado: ${money(income - expense)}.`;
+  const rows = await loadFinanceRows<any>(({ from, to }) =>
+    db
+      .from("fin_lancamento")
+      .select("id,tipo,status,valor_cents,competencia,pago_em,forma_pagamento,metadata,created_at")
+      .eq("company_id", companyId)
+      .neq("status", "cancelado")
+      .order("competencia", { ascending: true })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  const summary = summarizeFinanceCash(
+    rows.map(financeBalanceEntryFromRow),
+    financeCashSummaryRange(period || "month"),
+  );
+  return `No período, entraram ${money(summary.receivedCents)}, saíram ${money(summary.spentCents)}, os gastos no cartão somam ${money(summary.cardExpenseCents)} (com ${money(summary.cardPendingCents)} aguardando quitação) e há ${money(summary.pendingExpenseCents)} para pagar. Resultado de caixa: ${money(summary.netCents)}.`;
 }
 
 async function execute(db: any, companyId: string, userId: string, command: any) {
@@ -375,6 +369,7 @@ async function execute(db: any, companyId: string, userId: string, command: any)
       draft.intent === "create_bill" || draft.paymentStatus === "pending" ? "pendente" : "pago";
     const date =
       draft.date || new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    const cardSettlementPending = type === "despesa" && draft.paymentMethod === "cartao";
     const saved = await db
       .from("fin_lancamento")
       .insert({
@@ -383,11 +378,12 @@ async function execute(db: any, companyId: string, userId: string, command: any)
         descricao: draft.summary,
         valor_cents: draft.amountCents,
         categoria_id: draft.categoryId || null,
-        conta_id: draft.accountId || null,
+        conta_id: cardSettlementPending ? null : draft.accountId || null,
         forma_pagamento: draft.paymentMethod || null,
+        metadata: financeCardTransactionMetadata(type, draft.paymentMethod),
         status,
         vencimento: date,
-        pago_em: status === "pago" ? date : null,
+        pago_em: cardSettlementPending ? null : status === "pago" ? date : null,
         competencia: date,
         ocorrido_em: `${date}T12:00:00-03:00`,
         fonte: "whatsapp",

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   calculateFinanceBalance,
+  financeCardTransactionMetadata,
   loadFinanceRows,
+  summarizeFinanceCash,
   type FinanceBalanceEntry,
 } from "../src/lib/finance-balance";
 
@@ -10,7 +12,8 @@ const entry = (
   type: "receita" | "despesa",
   amountCents: number,
   status = "pago",
-): FinanceBalanceEntry => ({ type, amountCents, status, competence });
+  extra: Partial<FinanceBalanceEntry> = {},
+): FinanceBalanceEntry => ({ type, amountCents, status, competence, ...extra });
 
 describe("saldo disponível por competência", () => {
   test("carrega o saldo realizado de meses consecutivos", () => {
@@ -46,6 +49,7 @@ describe("saldo disponível por competência", () => {
       openingBalanceCents: 12000,
       receivedCents: 0,
       spentCents: 0,
+      cardExpenseCents: 0,
       netCents: 0,
       availableCents: 12000,
       pendingIncomeCents: 0,
@@ -104,6 +108,7 @@ describe("saldo disponível por competência", () => {
       openingBalanceCents: 0,
       receivedCents: 0,
       spentCents: 0,
+      cardExpenseCents: 0,
       netCents: 0,
       availableCents: 0,
       pendingIncomeCents: 3000,
@@ -120,6 +125,123 @@ describe("saldo disponível por competência", () => {
     expect(totals.openingBalanceCents).toBe(10000);
     expect(totals.netCents).toBe(5000);
     expect(totals.availableCents).toBe(15000);
+  });
+
+  test("compra no cartão aparece no período mas não reduz o caixa antes da quitação", () => {
+    const totals = calculateFinanceBalance(
+      [
+        entry("2026-06-01", "receita", 100000),
+        entry("2026-06-12", "despesa", 24500, "pago", {
+          paymentMethod: "cartao",
+          cardSettlement: "pending",
+          paidAt: null,
+        }),
+      ],
+      { from: "2026-06-01", to: "2026-06-30" },
+    );
+
+    expect(totals).toMatchObject({
+      receivedCents: 100000,
+      spentCents: 0,
+      cardExpenseCents: 24500,
+      netCents: 100000,
+      availableCents: 100000,
+      leftoverCents: 100000,
+    });
+  });
+
+  test("o clique de pagamento desconta o cartão na data paga, não na data da compra", () => {
+    const settledCardPurchase = entry("2026-05-20", "despesa", 20000, "pago", {
+      paymentMethod: "cartao",
+      cardSettlement: "paid",
+      paidAt: "2026-06-05",
+    });
+    const purchaseMonth = calculateFinanceBalance([settledCardPurchase], {
+      from: "2026-05-01",
+      to: "2026-05-31",
+    });
+    const paymentMonth = calculateFinanceBalance([settledCardPurchase], {
+      from: "2026-06-01",
+      to: "2026-06-30",
+    });
+
+    expect(purchaseMonth).toMatchObject({
+      spentCents: 0,
+      cardExpenseCents: 20000,
+      availableCents: 0,
+    });
+    expect(paymentMonth).toMatchObject({
+      spentCents: 20000,
+      cardExpenseCents: 0,
+      availableCents: -20000,
+    });
+  });
+
+  test("não cria baixa automática por vencimento ou pelo passar do tempo", () => {
+    const cardCharge = entry("2026-01-10", "despesa", 50000, "pago", {
+      paymentMethod: "cartao",
+      cardSettlement: "pending",
+      paidAt: null,
+    });
+    expect(
+      calculateFinanceBalance([cardCharge], { from: "2026-04-01", to: "2026-04-30" }),
+    ).toMatchObject({
+      openingBalanceCents: 0,
+      spentCents: 0,
+      availableCents: 0,
+      cardExpenseCents: 0,
+    });
+  });
+
+  test("só classifica despesa no cartão como aguardando quitação", () => {
+    expect(financeCardTransactionMetadata("despesa", "cartao")).toEqual({
+      card_settlement: "pending",
+    });
+    expect(financeCardTransactionMetadata("receita", "cartao")).toEqual({});
+    expect(financeCardTransactionMetadata("despesa", "pix", { channel: "manual" })).toEqual({
+      channel: "manual",
+    });
+  });
+
+  test("resumo comum não chama cartão pendente de saída e o mantém no total a quitar", () => {
+    const summary = summarizeFinanceCash(
+      [
+        entry("2026-06-01", "receita", 80000),
+        entry("2026-06-02", "despesa", 22000, "pago", {
+          paymentMethod: "cartao",
+          cardSettlement: "pending",
+          paidAt: null,
+        }),
+        entry("2026-06-03", "despesa", 10000),
+      ],
+      { from: "2026-06-01", to: "2026-06-30" },
+    );
+    expect(summary).toMatchObject({
+      receivedCents: 80000,
+      spentCents: 10000,
+      cardExpenseCents: 22000,
+      cardPendingCents: 22000,
+      netCents: 70000,
+    });
+  });
+
+  test("total pendente de cartão no resumo respeita a competência consultada", () => {
+    const summary = summarizeFinanceCash(
+      [
+        entry("2025-12-15", "despesa", 9000, "pago", {
+          paymentMethod: "cartao",
+          cardSettlement: "pending",
+          paidAt: null,
+        }),
+        entry("2026-06-15", "despesa", 4500, "pago", {
+          paymentMethod: "cartao",
+          cardSettlement: "pending",
+          paidAt: null,
+        }),
+      ],
+      { from: "2026-06-01", to: "2026-06-30" },
+    );
+    expect(summary.cardPendingCents).toBe(4500);
   });
 });
 

@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { Mic, Plus, Tags } from "lucide-react";
+import { CreditCard, Mic, Plus, Tags } from "lucide-react";
 import { toast } from "sonner";
 import { brandedRouteHead } from "@/config/brand";
 import { useBrand } from "@/contexts/brand-context";
@@ -50,6 +50,7 @@ import {
   listFinanceTransactions,
   type FinanceTransactionDetail,
 } from "@/lib/finance-dashboard.functions";
+import { markFinanceCardPaid } from "@/lib/finance-card-payment.functions";
 import { createFinanceCategory } from "@/lib/finance-categories.functions";
 import {
   canManageFinanceCategories,
@@ -71,6 +72,8 @@ type Payload = {
   items: FinanceTransactionDetail[];
   categories: Array<{ id: string; name: string; color: string; type: string; active: boolean }>;
   accounts: Array<{ id: string; name: string }>;
+  unpaidCardCents: number;
+  unpaidCardCount: number;
 };
 
 function TransactionsPage() {
@@ -88,17 +91,27 @@ function TransactionsPage() {
   const [editingItem, setEditingItem] = useState<FinanceTransactionDetail | null>(null);
   const [deletingItem, setDeletingItem] = useState<FinanceTransactionDetail | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const requestSequence = useRef(0);
 
   const refresh = useCallback(async () => {
-    if (!companyId) return;
+    const requestId = ++requestSequence.current;
+    if (!companyId) {
+      setData(null);
+      setError("");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
-      setData(await list({ data: { companyId, from: period.from, to: period.to } }));
+      const next = await list({ data: { companyId, from: period.from, to: period.to } });
+      if (requestSequence.current === requestId) setData(next);
     } catch (e: any) {
-      setError(e?.message || "Não foi possível carregar as movimentações.");
+      if (requestSequence.current === requestId) {
+        setError(e?.message || "Não foi possível carregar as movimentações.");
+      }
     } finally {
-      setLoading(false);
+      if (requestSequence.current === requestId) setLoading(false);
     }
   }, [companyId, list, period.from, period.to]);
 
@@ -127,7 +140,10 @@ function TransactionsPage() {
     void refresh();
     const onUpdate = () => void refresh();
     window.addEventListener("marcia:finance-updated", onUpdate);
-    return () => window.removeEventListener("marcia:finance-updated", onUpdate);
+    return () => {
+      requestSequence.current += 1;
+      window.removeEventListener("marcia:finance-updated", onUpdate);
+    };
   }, [refresh]);
 
   async function confirmDelete() {
@@ -182,6 +198,13 @@ function TransactionsPage() {
           </div>
         }
       />
+      {data && companyId ? (
+        <CardPaymentPanel
+          companyId={companyId}
+          data={data}
+          onPaid={() => window.dispatchEvent(new CustomEvent("marcia:finance-updated"))}
+        />
+      ) : null}
       {loading && !data ? (
         <FinanceLoading />
       ) : error && !data ? (
@@ -251,6 +274,124 @@ function TransactionsPage() {
   );
 }
 
+function formatCents(value: number) {
+  return (value / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function CardPaymentPanel({
+  companyId,
+  data,
+  onPaid,
+}: {
+  companyId: string;
+  data: Payload;
+  onPaid: () => void;
+}) {
+  const pay = useServerFn(markFinanceCardPaid);
+  const [open, setOpen] = useState(false);
+  const [accountId, setAccountId] = useState(data.accounts[0]?.id || "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!data.accounts.some((account) => account.id === accountId)) {
+      setAccountId(data.accounts[0]?.id || "");
+    }
+  }, [accountId, data.accounts]);
+
+  async function confirmPayment(event: FormEvent) {
+    event.preventDefault();
+    if (!accountId) {
+      toast.error("Escolha a conta de onde saiu o pagamento.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await pay({ data: { companyId, accountId } });
+      if (result.paidCount > 0) {
+        const accountName = data.accounts.find((account) => account.id === accountId)?.name;
+        toast.success(
+          `${formatCents(result.paidCents)} marcados como pagos${accountName ? ` na conta ${accountName}` : ""}.`,
+        );
+      } else {
+        toast.info("Não há gastos no cartão aguardando pagamento.");
+      }
+      setOpen(false);
+      onPaid();
+    } catch (error: any) {
+      toast.error(error?.message || "Não foi possível registrar o pagamento do cartão.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-3 rounded-2xl border border-violet-200 bg-violet-50/70 p-4 sm:flex-row sm:items-center dark:border-violet-900 dark:bg-violet-950/20">
+      <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-200">
+        <CreditCard className="size-5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <h2 className="text-sm font-black">Gastos no cartão de crédito</h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {data.unpaidCardCount > 0
+            ? `${data.unpaidCardCount} gasto(s), ${formatCents(data.unpaidCardCents)} aguardando pagamento. O saldo só é abatido quando você confirmar.`
+            : "Novas compras no cartão aparecem separadas e não reduzem o saldo até a confirmação manual."}
+        </p>
+      </div>
+      {data.unpaidCardCount > 0 && data.accounts.length > 0 ? (
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild>
+            <Button
+              type="button"
+              size="sm"
+              className="shrink-0 rounded-xl bg-violet-700 hover:bg-violet-800"
+            >
+              Marcar cartão como pago
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="rounded-2xl">
+            <DialogHeader>
+              <DialogTitle>Registrar pagamento do cartão</DialogTitle>
+              <DialogDescription>
+                O total de {formatCents(data.unpaidCardCents)} será abatido uma única vez da conta
+                escolhida. Este botão só registra que você já pagou; não envia dinheiro ao banco.
+                Limite e vencimento não acionam a baixa.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={confirmPayment} className="space-y-4">
+              <div>
+                <Label>Conta usada para pagar</Label>
+                <Select value={accountId} onValueChange={setAccountId}>
+                  <SelectTrigger className="mt-1 h-10 rounded-xl">
+                    <SelectValue placeholder="Selecione uma conta" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {data.accounts.map((account) => (
+                      <SelectItem key={account.id} value={account.id}>
+                        {account.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                type="submit"
+                disabled={saving || !accountId}
+                className="w-full rounded-xl bg-violet-700 hover:bg-violet-800"
+              >
+                {saving ? "Registrando…" : "Confirmar que o cartão foi pago"}
+              </Button>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ) : data.unpaidCardCount > 0 ? (
+        <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">
+          Cadastre uma conta ativa para registrar a quitação.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function NewTransactionDialog({
   companyId,
   data,
@@ -302,7 +443,13 @@ function NewTransactionDialog({
           source: "manual",
         } as any,
       });
-      toast.success(type === "receita" ? "Entrada registrada." : "Saída registrada.");
+      toast.success(
+        type === "receita"
+          ? "Entrada registrada."
+          : paymentMethod === "cartao"
+            ? "Gasto no cartão registrado; o saldo será abatido quando você marcar que foi pago."
+            : "Saída registrada.",
+      );
       setOpen(false);
       setDescription("");
       setMerchant("");
@@ -444,6 +591,11 @@ function NewTransactionDialog({
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Selecione Pix, cartão, dinheiro ou outra forma. O app não marca Pix por padrão.
               </p>
+              {type === "despesa" && paymentMethod === "cartao" ? (
+                <p className="mt-1 text-[11px] font-semibold text-violet-700 dark:text-violet-300">
+                  A compra ficará separada do saldo até você marcar o cartão como pago.
+                </p>
+              ) : null}
             </div>
           </div>
           <div>

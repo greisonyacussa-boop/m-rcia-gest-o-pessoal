@@ -6,7 +6,7 @@ import type {
   FinancePlannerItem,
   FinanceTransactionDetail,
 } from "./finance-dashboard.functions";
-import { calculateFinanceBalance } from "./finance-balance";
+import { calculateFinanceBalance, getFinanceCashDate } from "./finance-balance";
 import { addDays, daysBetween, isWithin, toIsoDate } from "./finance-period";
 
 const CATEGORIES: Record<string, string> = {
@@ -397,7 +397,9 @@ function toDetail(seed: Seed, date: string, id: string): FinanceTransactionDetai
     hasAttachment: Boolean(seed.attachment),
     status,
     dueDate: status === "pago" ? null : date,
-    paidAt: status === "pago" ? date : null,
+    paidAt:
+      status === "pago" && !(seed.type === "despesa" && seed.payment === "cartao") ? date : null,
+    cardSettlement: seed.type === "despesa" && seed.payment === "cartao" ? "pending" : null,
     note: seed.note || null,
     originalInput: seed.original || null,
     installment: null,
@@ -445,15 +447,16 @@ export function buildDemoPlanner(
   last: string,
 ): FinancePlannerItem[] {
   const items: FinancePlannerItem[] = transactions
-    .filter((t) => isWithin(t.date, first, last))
+    .filter((t) => isWithin(t.cardSettlement === "paid" ? t.paidAt || t.date : t.date, first, last))
     .map((t) => ({
       id: `entry-${t.id}`,
-      date: t.date,
+      date: t.cardSettlement === "paid" ? t.paidAt || t.date : t.date,
       time: t.time,
       title: t.description,
       amountCents: t.amountCents,
       type: t.type,
       status: t.status,
+      cardSettlement: t.cardSettlement,
       kind: t.status === "pago" ? "movimentacao" : "conta",
       recurring: t.source === "recorrencia",
       category: t.category,
@@ -503,20 +506,22 @@ export function buildDemoSnapshot(
   "period" | "totals" | "cashflow" | "categories" | "upcoming" | "latest" | "insight"
 > {
   const rows = transactions.filter((t) => isWithin(t.date, period.from, period.to));
-  const balance = calculateFinanceBalance(
-    transactions.map((transaction) => ({
-      type: transaction.type,
-      status: transaction.status,
-      amountCents: transaction.amountCents,
-      competence: transaction.date,
-    })),
-    period,
-  );
+  const balanceEntries = transactions.map((transaction) => ({
+    type: transaction.type,
+    status: transaction.status,
+    amountCents: transaction.amountCents,
+    competence: transaction.date,
+    paymentMethod: transaction.paymentMethod,
+    cardSettlement: transaction.cardSettlement,
+    paidAt: transaction.paidAt,
+  }));
+  const balance = calculateFinanceBalance(balanceEntries, period);
   const {
     openingBalanceCents,
     availableCents,
     receivedCents,
     spentCents,
+    cardExpenseCents,
     netCents,
     pendingIncomeCents,
     pendingExpenseCents,
@@ -531,31 +536,46 @@ export function buildDemoSnapshot(
         (byCategory.get(t.category || "Sem categoria") || 0) + t.amountCents,
       ),
     );
+  const categoryTotalSpendCents = Array.from(byCategory.values()).reduce(
+    (total, amount) => total + amount,
+    0,
+  );
   const categories = Array.from(byCategory.entries())
     .map(([name, amountCents]) => ({
       id: name,
       name,
       color: CATEGORIES[name] || "#94A3B8",
       amountCents,
-      share: spentCents ? Math.round((amountCents / spentCents) * 100) : 0,
+      share: categoryTotalSpendCents
+        ? Math.round((amountCents / categoryTotalSpendCents) * 100)
+        : 0,
     }))
     .sort((a, b) => b.amountCents - a.amountCents)
     .slice(0, 6);
   const days = daysBetween(period.from, period.to) + 1;
   const cashflow = Array.from({ length: days }, (_, i) => {
     const date = addDays(period.from, i);
-    const dayRows = rows.filter((t) => t.date === date && t.status === "pago");
-    const incomeCents = dayRows
-      .filter((t) => t.type === "receita")
-      .reduce((a, t) => a + t.amountCents, 0);
-    const expenseCents = dayRows
-      .filter((t) => t.type === "despesa")
-      .reduce((a, t) => a + t.amountCents, 0);
+    const cashRows = balanceEntries.filter((entry) => getFinanceCashDate(entry) === date);
+    const incomeCents = cashRows
+      .filter((entry) => entry.type === "receita")
+      .reduce((sum, entry) => sum + entry.amountCents, 0);
+    const expenseCents = cashRows
+      .filter((entry) => entry.type === "despesa")
+      .reduce((sum, entry) => sum + entry.amountCents, 0);
+    const cardExpenseCents = rows
+      .filter(
+        (transaction) =>
+          transaction.date === date &&
+          transaction.type === "despesa" &&
+          transaction.paymentMethod === "cartao",
+      )
+      .reduce((sum, transaction) => sum + transaction.amountCents, 0);
     return {
       date,
       label: `${date.slice(8, 10)}/${date.slice(5, 7)}`,
       incomeCents,
       expenseCents,
+      cardExpenseCents,
       netCents: incomeCents - expenseCents,
     };
   });
@@ -570,6 +590,7 @@ export function buildDemoSnapshot(
       availableCents,
       receivedCents,
       spentCents,
+      cardExpenseCents,
       netCents,
       pendingIncomeCents,
       pendingExpenseCents,
@@ -600,6 +621,7 @@ export function buildDemoSnapshot(
         amountCents: t.amountCents,
         date: t.date,
         status: t.status,
+        cardSettlement: t.cardSettlement,
         category: t.category,
         categoryColor: t.categoryColor,
         source: t.source,
@@ -607,7 +629,7 @@ export function buildDemoSnapshot(
     insight: top
       ? {
           title: `${top.name} lidera seus gastos`,
-          body: `${top.share}% das saídas do período estão nessa categoria. Peça à MárcIA para comparar com o mês passado.`,
+          body: `${top.share}% dos gastos do período estão nessa categoria. Peça à MárcIA para comparar com o mês passado.`,
           tone: top.share >= 40 ? "attention" : "neutral",
         }
       : {

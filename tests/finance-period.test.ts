@@ -4,6 +4,7 @@ import {
   resolveFinancePeriod,
   sanitizeRange,
   summarizeFinanceDay,
+  statusLabel,
 } from "../src/lib/finance-period";
 
 const today = new Date(2026, 9, 20); // 20/10/2026
@@ -48,10 +49,39 @@ describe("resumo do dia no calendário", () => {
     ).toEqual({
       incomeCents: 320000,
       expenseCents: 8490,
+      cardExpenseCents: 0,
+      cardPendingCount: 0,
+      cardPendingCents: 0,
       netCents: 311510,
       pendingCount: 1,
       pendingCents: -15000,
     });
+  });
+  test("cartão pendente fica separado do caixa e não vence por causa da data", () => {
+    expect(
+      summarizeFinanceDay([
+        { type: "despesa", status: "pago", amountCents: 22000, cardSettlement: "pending" },
+        { type: "despesa", status: "pago", amountCents: 5000, cardSettlement: "paid" },
+      ]),
+    ).toMatchObject({
+      expenseCents: 5000,
+      cardExpenseCents: 22000,
+      cardPendingCount: 1,
+      cardPendingCents: 22000,
+      netCents: -5000,
+      pendingCount: 0,
+    });
+    expect(
+      financeDayStatus(
+        {
+          type: "despesa",
+          status: "pago",
+          date: "2026-10-01",
+          cardSettlement: "pending",
+        },
+        "2026-11-04",
+      ),
+    ).toBe("cartao_pendente");
   });
   test("conta pendente com data passada aparece como vencida", () => {
     expect(
@@ -60,5 +90,11 @@ describe("resumo do dia no calendário", () => {
     expect(
       financeDayStatus({ type: "receita", status: "pago", date: "2026-10-01" }, "2026-10-20"),
     ).toBe("recebido");
+  });
+  test("status de cartão depende apenas da confirmação explícita, nunca da data", () => {
+    expect(statusLabel("despesa", "pago", "2026-01-10", "2026-10-20", "pending")).toBe(
+      "Cartão a pagar",
+    );
+    expect(statusLabel("despesa", "pago", "2026-10-01", "2026-10-20", "paid")).toBe("Cartão pago");
   });
 });

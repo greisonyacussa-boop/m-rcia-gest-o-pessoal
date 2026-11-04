@@ -1,13 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import {
+  financeBalanceEntryFromRow,
+  financeCardTransactionMetadata,
+  financeCashSummaryRange,
+  loadFinanceRows,
+  summarizeFinanceCash,
+} from "./finance-balance";
 import { normalizeBrazilianPhoneToE164 } from "./phone";
 import { LOVABLE_AI_MODEL } from "./lovable-ai-config";
-import {
-  DEFAULT_OPERATION_TIMEZONE,
-  localDateTimeToUtc,
-  zonedParts,
-} from "./timezone";
+import { DEFAULT_OPERATION_TIMEZONE, localDateTimeToUtc, zonedParts } from "./timezone";
 
 export type MarciaCommandIntent =
   | "create_customer"
@@ -23,7 +26,12 @@ export type MarciaCommandIntent =
   | "unknown";
 
 export type MarciaPaymentMethod =
-  "pix" | "cartao" | "dinheiro" | "transferencia" | "boleto" | "outro";
+  | "pix"
+  | "cartao"
+  | "dinheiro"
+  | "transferencia"
+  | "boleto"
+  | "outro";
 
 export type MarciaCommandDraft = {
   intent: MarciaCommandIntent;
@@ -41,6 +49,7 @@ export type MarciaCommandDraft = {
   amountCents?: number | null;
   costCents?: number | null;
   paymentMethod?: MarciaPaymentMethod | null;
+  costPaymentMethod?: MarciaPaymentMethod | null;
   paymentStatus?: "paid" | "pending" | null;
   scheduledAt?: string | null;
   queryPeriod?: "today" | "week" | "month" | "all" | null;
@@ -121,6 +130,9 @@ function cleanUuid(value: unknown): string | null {
 }
 
 function cleanCents(value: unknown): number | null {
+  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) {
+    return null;
+  }
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 999_999_999_00) return null;
   return parsed;
@@ -133,6 +145,7 @@ function normalizeDraft(value: unknown): MarciaCommandDraft {
       : {};
   const rawIntent = cleanString(raw.intent, 40) as MarciaCommandIntent | null;
   const paymentMethod = cleanString(raw.paymentMethod, 20) as MarciaPaymentMethod | null;
+  const costPaymentMethod = cleanString(raw.costPaymentMethod, 20) as MarciaPaymentMethod | null;
   const paymentStatus = cleanString(raw.paymentStatus, 20);
   const queryPeriod = cleanString(raw.queryPeriod, 20);
   const workOrderNumber = Number(raw.workOrderNumber);
@@ -154,6 +167,8 @@ function normalizeDraft(value: unknown): MarciaCommandDraft {
     amountCents: cleanCents(raw.amountCents),
     costCents: cleanCents(raw.costCents),
     paymentMethod: paymentMethod && PAYMENT_METHODS.has(paymentMethod) ? paymentMethod : null,
+    costPaymentMethod:
+      costPaymentMethod && PAYMENT_METHODS.has(costPaymentMethod) ? costPaymentMethod : null,
     paymentStatus: paymentStatus === "paid" || paymentStatus === "pending" ? paymentStatus : null,
     scheduledAt: cleanString(raw.scheduledAt, 60),
     queryPeriod:
@@ -163,7 +178,13 @@ function normalizeDraft(value: unknown): MarciaCommandDraft {
       queryPeriod === "all"
         ? queryPeriod
         : null,
-    missing: [],
+    missing: Array.isArray(raw.missing)
+      ? raw.missing
+          .filter(
+            (field): field is string => typeof field === "string" && /^[a-z_]{1,32}$/.test(field),
+          )
+          .slice(0, 16)
+      : [],
   };
 }
 
@@ -181,7 +202,10 @@ function parseSpokenSchedule(
   previous: MarciaCommandDraft | null,
   now = new Date(),
 ): string | null {
-  const normalized = message.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const normalized = message
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
   const timeMatch = normalized.match(
     /\b(?:as|pelas?)\s*(\d{1,2})(?:(?:h|:)([0-5]\d))?\b|\b(\d{1,2})(?:h|:)([0-5]\d)?\b/,
   );
@@ -214,15 +238,26 @@ function parseSpokenSchedule(
     hasDate = true;
   } else {
     const weekdayNames: Array<[RegExp, number]> = [
-      [/\bdomingo\b/, 0], [/\bsegunda\b/, 1], [/\bterca\b/, 2], [/\bquarta\b/, 3],
-      [/\bquinta\b/, 4], [/\bsexta\b/, 5], [/\bsabado\b/, 6],
+      [/\bdomingo\b/, 0],
+      [/\bsegunda\b/, 1],
+      [/\bterca\b/, 2],
+      [/\bquarta\b/, 3],
+      [/\bquinta\b/, 4],
+      [/\bsexta\b/, 5],
+      [/\bsabado\b/, 6],
     ];
     const weekday = weekdayNames.find(([pattern]) => pattern.test(normalized))?.[1];
     if (weekday !== undefined) {
-      const currentWeekday = new Date(Date.UTC(current.year, current.month - 1, current.day)).getUTCDay();
+      const currentWeekday = new Date(
+        Date.UTC(current.year, current.month - 1, current.day),
+      ).getUTCDay();
       const dayOffset = (weekday - currentWeekday + 7) % 7 || 7;
       const date = new Date(Date.UTC(current.year, current.month - 1, current.day + dayOffset));
-      target = { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate() };
+      target = {
+        year: date.getUTCFullYear(),
+        month: date.getUTCMonth() + 1,
+        day: date.getUTCDate(),
+      };
       hasDate = true;
     }
   }
@@ -233,7 +268,10 @@ function parseSpokenSchedule(
     hasDate = true;
   }
   if (!hasDate) return null;
-  return localDateTimeToUtc({ ...target, hour, minute }, DEFAULT_OPERATION_TIMEZONE)?.toISOString() || null;
+  return (
+    localDateTimeToUtc({ ...target, hour, minute }, DEFAULT_OPERATION_TIMEZONE)?.toISOString() ||
+    null
+  );
 }
 
 function matchByName<T extends { id: string; name: string }>(
@@ -281,7 +319,7 @@ function resolveEntities(draft: MarciaCommandDraft, context: CommandContext): Ma
     next.customerId ||= order.customer_id;
     next.customerName ||= order.customer_name;
     next.summary ||= order.summary;
-    if (!next.amountCents && Number(order.total_cents) > 0)
+    if (next.amountCents === null && Number(order.total_cents) > 0)
       next.amountCents = Number(order.total_cents);
   }
 
@@ -290,7 +328,8 @@ function resolveEntities(draft: MarciaCommandDraft, context: CommandContext): Ma
     next.serviceId = service.id;
     next.serviceName = service.name;
     next.summary ||= service.name;
-    if (!next.amountCents && service.price_cents > 0) next.amountCents = service.price_cents;
+    if (next.amountCents === null && service.price_cents > 0)
+      next.amountCents = service.price_cents;
   }
   const professional = matchByName(
     context.professionals,
@@ -331,9 +370,16 @@ function requiredFields(draft: MarciaCommandDraft): string[] {
     case "complete_work_order":
       if (!draft.workOrderId) missing.push("work_order");
       if (draft.amountCents == null) missing.push("amount");
-      if (!draft.paymentStatus) missing.push("payment");
-      else if (draft.paymentStatus === "paid" && !draft.paymentMethod)
+      if ((draft.amountCents || 0) > 0 && !draft.paymentStatus) missing.push("payment");
+      else if (
+        (draft.amountCents || 0) > 0 &&
+        draft.paymentStatus === "paid" &&
+        !draft.paymentMethod
+      )
         missing.push("payment_method");
+      if ((draft.costCents || 0) > 0 && !draft.costPaymentMethod) {
+        missing.push("cost_payment_method");
+      }
       break;
     case "create_appointment":
       if (!draft.customerName && !draft.customerId) missing.push("customer");
@@ -377,6 +423,10 @@ function questionFor(field: string, context: CommandContext) {
     payment_method: {
       message: "Qual foi a forma de pagamento?",
       quickReplies: ["Pix", "Cartão", "Dinheiro", "Transferência"],
+    },
+    cost_payment_method: {
+      message: "Como você pagou esse custo da OS?",
+      quickReplies: ["Pix", "Cartão", "Dinheiro", "Transferência", "Boleto", "Outro"],
     },
     changes: { message: "O que você quer acrescentar ou alterar nessa OS?", quickReplies: [] },
     service: {
@@ -441,6 +491,9 @@ function previewFor(draft: MarciaCommandDraft): Array<{ label: string; value: st
   }
   if (draft.amountCents != null) rows.push({ label: "Valor", value: money(draft.amountCents) });
   if (draft.costCents) rows.push({ label: "Custo", value: money(draft.costCents) });
+  if (draft.costPaymentMethod) {
+    rows.push({ label: "Forma do custo", value: labelPayment(draft.costPaymentMethod) });
+  }
   if (draft.paymentStatus) {
     rows.push({
       label: "Pagamento",
@@ -549,6 +602,8 @@ REGRAS:
 - Se a mensagem for resposta curta a uma pergunta anterior, preserve o restante do rascunho e preencha apenas o que ela respondeu.
 - "Pix", "cartão", "dinheiro" ou "transferência" significa paymentStatus="paid" e o respectivo paymentMethod.
 - "não pagou", "ficou devendo" ou equivalente significa paymentStatus="pending" e paymentMethod=null.
+- Em complete_work_order, costPaymentMethod descreve como o próprio custo foi pago; nunca copie para ele o paymentMethod usado pelo cliente. Se houver costCents e o usuário disser que o custo foi pago no cartão, use costPaymentMethod="cartao"; se não disser a forma, deixe null para perguntar.
+- Para uma resposta curta com uma forma de pagamento, use o campo de RASCUNHO ANTERIOR.missing: se contiver "payment_method", preencha paymentMethod; senão, se contiver "cost_payment_method", preencha somente costPaymentMethod. Nunca preencha os dois pela mesma resposta.
 - Valores devem ser inteiros em centavos. R$ 450 = 45000.
 - A operação usa o fuso America/Sao_Paulo. Agora na operação: ${currentLocalText}.
 - scheduledAt deve preservar exatamente a hora falada pelo usuário no fuso America/Sao_Paulo e usar ISO 8601 com offset -03:00. Ex.: "amanhã às 14h" vira o dia de amanhã às 14:00, nunca 17:00.
@@ -576,6 +631,7 @@ Responda SOMENTE JSON válido e use null quando não souber:
   "amountCents": null,
   "costCents": null,
   "paymentMethod": null,
+  "costPaymentMethod": null,
   "paymentStatus": null,
   "scheduledAt": null,
   "queryPeriod": null
@@ -583,15 +639,15 @@ Responda SOMENTE JSON válido e use null quando não souber:
 
   const { lovableAiChat } = await import("./lovable-ai.server");
   const raw = await lovableAiChat(
-      [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content: `CONTEXTO REAL:\n${JSON.stringify(compactContext)}\n\nRASCUNHO ANTERIOR:\n${JSON.stringify(params.previous)}\n\nNOVA MENSAGEM:\n${params.message}`,
-        },
-      ],
-      { model: LOVABLE_AI_MODEL },
-    );
+    [
+      { role: "system", content: system },
+      {
+        role: "user",
+        content: `CONTEXTO REAL:\n${JSON.stringify(compactContext)}\n\nRASCUNHO ANTERIOR:\n${JSON.stringify(params.previous)}\n\nNOVA MENSAGEM:\n${params.message}`,
+      },
+    ],
+    { model: LOVABLE_AI_MODEL },
+  );
   const normalized = normalizeDraft(extractJson(raw));
   const spokenSchedule = parseSpokenSchedule(params.message, params.previous);
   if (spokenSchedule) normalized.scheduledAt = spokenSchedule;
@@ -636,38 +692,22 @@ async function answerQuery(companyId: string, draft: MarciaCommandDraft): Promis
     throw new Error("Ative o financeiro do plano para consultar entradas e despesas.");
   }
 
-  const now = new Date();
-  let from: string | null = null;
-  if (draft.queryPeriod === "today") {
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    from = start.toISOString().slice(0, 10);
-  } else if (draft.queryPeriod === "week") {
-    const start = new Date(now);
-    start.setDate(now.getDate() - 6);
-    from = start.toISOString().slice(0, 10);
-  } else if (draft.queryPeriod !== "all") {
-    from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-  }
-  let query = supabaseAdmin
-    .from("fin_lancamento")
-    .select("tipo,status,valor_cents")
-    .eq("company_id", companyId)
-    .neq("status", "cancelado");
-  if (from) query = query.gte("competencia", from);
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
-  const rows = data || [];
-  const received = rows
-    .filter((row: any) => row.tipo === "receita" && row.status === "pago")
-    .reduce((sum: number, row: any) => sum + Number(row.valor_cents || 0), 0);
-  const expenses = rows
-    .filter((row: any) => row.tipo === "despesa" && row.status === "pago")
-    .reduce((sum: number, row: any) => sum + Number(row.valor_cents || 0), 0);
-  const pending = rows
-    .filter((row: any) => row.tipo === "receita" && ["pendente", "atrasado"].includes(row.status))
-    .reduce((sum: number, row: any) => sum + Number(row.valor_cents || 0), 0);
-  return `Entraram ${money(received)}, saíram ${money(expenses)} e há ${money(pending)} a receber no período.`;
+  const rows = await loadFinanceRows<any>(({ from, to }) =>
+    supabaseAdmin
+      .from("fin_lancamento")
+      .select("id,tipo,status,valor_cents,competencia,pago_em,forma_pagamento,metadata,created_at")
+      .eq("company_id", companyId)
+      .neq("status", "cancelado")
+      .order("competencia", { ascending: true })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  const summary = summarizeFinanceCash(
+    rows.map(financeBalanceEntryFromRow),
+    financeCashSummaryRange(draft.queryPeriod || "month"),
+  );
+  return `Entraram ${money(summary.receivedCents)}, saíram ${money(summary.spentCents)}, os gastos no cartão somam ${money(summary.cardExpenseCents)} (com ${money(summary.cardPendingCents)} aguardando quitação) e há ${money(summary.pendingIncomeCents)} a receber no período. Resultado de caixa: ${money(summary.netCents)}.`;
 }
 
 export const interpretMarciaCommand = createServerFn({ method: "POST" })
@@ -850,6 +890,7 @@ async function insertFinance(params: {
     .maybeSingle();
   const today = new Date().toISOString().slice(0, 10);
   const status = params.paymentStatus === "pending" ? "pendente" : "pago";
+  const cardSettlementPending = params.type === "despesa" && params.paymentMethod === "cartao";
   const existing = await db
     .from("fin_lancamento")
     .select("id")
@@ -868,9 +909,10 @@ async function insertFinance(params: {
       valor_cents: params.amountCents,
       categoria_id: category?.id || null,
       forma_pagamento: params.paymentMethod || null,
+      metadata: financeCardTransactionMetadata(params.type, params.paymentMethod),
       status,
       vencimento: today,
-      pago_em: status === "pago" ? today : null,
+      pago_em: cardSettlementPending ? null : status === "pago" ? today : null,
       competencia: today,
       contato_numero: params.customerPhone || null,
       created_by: params.userId,
@@ -1001,8 +1043,18 @@ export const executeMarciaCommand = createServerFn({ method: "POST" })
           .eq("id", draft.workOrderId!)
           .single();
         if (error) throw new Error(error.message);
+        if (
+          draft.intent === "complete_work_order" &&
+          (draft.costCents || 0) > 0 &&
+          !draft.costPaymentMethod
+        ) {
+          throw new Error("Informe como o custo da OS foi pago.");
+        }
         if (draft.intent === "complete_work_order" && order.status === "completed") {
           throw new Error(`A OS #${order.number} já está concluída.`);
+        }
+        if (draft.intent === "complete_work_order" && order.status === "cancelled") {
+          throw new Error("Uma OS cancelada não pode ser concluída.");
         }
         if (
           draft.intent === "start_work_order" &&
@@ -1033,34 +1085,50 @@ export const executeMarciaCommand = createServerFn({ method: "POST" })
           if (draft.details)
             patch.description = [order.description, draft.details].filter(Boolean).join("\n\n");
         }
-        const { error: updateError } = await db
+        const { data: claimedOrder, error: updateError } = await db
           .from("marcia_work_order")
           .update(patch)
           .eq("company_id", data.companyId)
-          .eq("id", order.id);
+          .eq("id", order.id)
+          .eq("status", order.status)
+          .select("id")
+          .maybeSingle();
         if (updateError) throw new Error(updateError.message);
-        if (draft.intent === "complete_work_order" && draft.amountCents) {
-          await insertFinance({
-            companyId: data.companyId,
-            commandId: data.commandId,
-            userId: context.userId,
-            type: "receita",
-            description: `OS #${order.number} · ${order.summary}`,
-            amountCents: draft.amountCents,
-            paymentMethod: draft.paymentMethod,
-            paymentStatus: draft.paymentStatus,
-            workOrderId: order.id,
-            customerPhone: order.marcia_customer?.phone_e164,
+        if (!claimedOrder) {
+          throw new Error("A OS foi alterada por outra pessoa. Atualize a tela e tente novamente.");
+        }
+        if (
+          draft.intent === "complete_work_order" &&
+          ((draft.amountCents || 0) > 0 || (draft.costCents || 0) > 0) &&
+          (await financeEnabled(data.companyId))
+        ) {
+          const { error: seedError } = await db.rpc("seed_fin_categorias", {
+            _company_id: data.companyId,
           });
-          if (draft.costCents) {
+          if (seedError) throw new Error(seedError.message);
+          if ((draft.amountCents || 0) > 0) {
+            await insertFinance({
+              companyId: data.companyId,
+              commandId: data.commandId,
+              userId: context.userId,
+              type: "receita",
+              description: `OS #${order.number} · ${order.summary}`,
+              amountCents: draft.amountCents!,
+              paymentMethod: draft.paymentMethod,
+              paymentStatus: draft.paymentStatus,
+              workOrderId: order.id,
+              customerPhone: order.marcia_customer?.phone_e164,
+            });
+          }
+          if ((draft.costCents || 0) > 0) {
             await insertFinance({
               companyId: data.companyId,
               commandId: data.commandId,
               userId: context.userId,
               type: "despesa",
               description: `Custo da OS #${order.number}`,
-              amountCents: draft.costCents,
-              paymentMethod: draft.paymentMethod,
+              amountCents: draft.costCents!,
+              paymentMethod: draft.costPaymentMethod,
               paymentStatus: "paid",
               workOrderId: order.id,
               customerPhone: order.marcia_customer?.phone_e164,

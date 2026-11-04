@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { Mic } from "lucide-react";
 import { brandedRouteHead } from "@/config/brand";
@@ -30,6 +30,7 @@ function PlannerPage() {
   const [items, setItems] = useState<FinancePlannerItem[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const requestSequence = useRef(0);
   const range = useMemo(() => {
     // Inclui as semanas visíveis antes/depois do mês.
     const first = new Date(month.getFullYear(), month.getMonth(), 1 - 7);
@@ -38,15 +39,24 @@ function PlannerPage() {
   }, [month]);
 
   const refresh = useCallback(async () => {
-    if (!companyId) return;
+    const requestId = ++requestSequence.current;
+    if (!companyId) {
+      setItems(null);
+      setError("");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
-      setItems(await load({ data: { companyId, ...range } }));
+      const next = await load({ data: { companyId, ...range } });
+      if (requestSequence.current === requestId) setItems(next);
     } catch (e: any) {
-      setError(e?.message || "Não foi possível carregar o calendário.");
+      if (requestSequence.current === requestId) {
+        setError(e?.message || "Não foi possível carregar o calendário.");
+      }
     } finally {
-      setLoading(false);
+      if (requestSequence.current === requestId) setLoading(false);
     }
   }, [companyId, load, range]);
 
@@ -54,7 +64,10 @@ function PlannerPage() {
     void refresh();
     const onUpdate = () => void refresh();
     window.addEventListener("marcia:finance-updated", onUpdate);
-    return () => window.removeEventListener("marcia:finance-updated", onUpdate);
+    return () => {
+      requestSequence.current += 1;
+      window.removeEventListener("marcia:finance-updated", onUpdate);
+    };
   }, [refresh]);
 
   return (

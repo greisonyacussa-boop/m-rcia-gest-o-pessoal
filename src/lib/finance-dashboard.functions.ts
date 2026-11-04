@@ -4,8 +4,13 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { addDays, daysBetween, isIsoDate, sanitizeRange, toIsoDate } from "./finance-period";
 import {
   calculateFinanceBalance,
+  financeBalanceEntryFromRow,
+  financeCardTransactionMetadata,
+  getFinanceCashDate,
   loadFinanceRows,
+  readFinanceCardSettlement,
   type FinanceBalanceEntry,
+  type FinanceCardSettlement,
 } from "./finance-balance";
 
 export type FinanceDashboardSnapshot = {
@@ -17,6 +22,7 @@ export type FinanceDashboardSnapshot = {
     availableCents: number;
     receivedCents: number;
     spentCents: number;
+    cardExpenseCents: number;
     netCents: number;
     pendingIncomeCents: number;
     pendingExpenseCents: number;
@@ -28,6 +34,7 @@ export type FinanceDashboardSnapshot = {
     label: string;
     incomeCents: number;
     expenseCents: number;
+    cardExpenseCents: number;
     netCents: number;
   }>;
   categories: Array<{
@@ -87,6 +94,7 @@ export type FinanceDashboardSnapshot = {
     amountCents: number;
     date: string;
     status: string;
+    cardSettlement?: FinanceCardSettlement;
     category: string | null;
     categoryColor: string | null;
     source: string;
@@ -101,6 +109,7 @@ export type FinanceCalendarItem = {
   amountCents: number;
   type: "receita" | "despesa";
   status: string;
+  cardSettlement?: FinanceCardSettlement;
   recurring: boolean;
 };
 
@@ -126,6 +135,7 @@ export type FinanceTransactionDetail = {
   status: string;
   dueDate: string | null;
   paidAt: string | null;
+  cardSettlement?: FinanceCardSettlement;
   note: string | null;
   originalInput: string | null;
   installment: string | null;
@@ -140,6 +150,7 @@ export type FinancePlannerItem = {
   amountCents: number;
   type: "receita" | "despesa";
   status: string;
+  cardSettlement?: FinanceCardSettlement;
   kind: "movimentacao" | "conta" | "recorrencia";
   recurring: boolean;
   category: string | null;
@@ -229,7 +240,7 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
         db
           .from("fin_lancamento")
           .select(
-            "id,tipo,descricao,valor_cents,status,vencimento,pago_em,competencia,categoria_id,fonte,created_at",
+            "id,tipo,descricao,valor_cents,status,vencimento,pago_em,competencia,categoria_id,conta_id,forma_pagamento,metadata,fonte,created_at",
           )
           .eq("company_id", data.companyId)
           .neq("status", "cancelado")
@@ -243,7 +254,9 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
       loadFinanceRows<any>(({ from: pageFrom, to: pageTo }) =>
         db
           .from("fin_lancamento")
-          .select("id,tipo,valor_cents,status,competencia,created_at")
+          .select(
+            "id,tipo,valor_cents,status,competencia,pago_em,conta_id,forma_pagamento,metadata,created_at",
+          )
           .eq("company_id", data.companyId)
           .eq("status", "pago")
           .lt("competencia", from)
@@ -301,17 +314,13 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
 
     const rows = transactions;
     const balanceEntries: FinanceBalanceEntry[] = [...historicalTransactions, ...rows].map(
-      (row: any) => ({
-        type: row.tipo,
-        status: row.status,
-        amountCents: cents(row.valor_cents),
-        competence: String(row.competencia).slice(0, 10),
-      }),
+      financeBalanceEntryFromRow,
     );
     const calculatedBalance = calculateFinanceBalance(balanceEntries, { from, to });
     const {
       receivedCents,
       spentCents,
+      cardExpenseCents,
       netCents,
       openingBalanceCents,
       availableCents,
@@ -332,6 +341,10 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
         const key = row.categoria_id || "uncategorized";
         categorySpend.set(key, (categorySpend.get(key) || 0) + cents(row.valor_cents));
       });
+    const categoryTotalSpendCents = Array.from(categorySpend.values()).reduce(
+      (total, amount) => total + amount,
+      0,
+    );
     const categoryList = Array.from(categorySpend.entries())
       .map(([id, amountCents]) => {
         const category = categoryById.get(id) as any;
@@ -340,31 +353,41 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
           name: category?.nome || "Sem categoria",
           color: category?.cor || "#94A3B8",
           amountCents,
-          share: spentCents ? Math.round((amountCents / spentCents) * 100) : 0,
+          share: categoryTotalSpendCents
+            ? Math.round((amountCents / categoryTotalSpendCents) * 100)
+            : 0,
         };
       })
       .sort((first, second) => second.amountCents - first.amountCents)
       .slice(0, 6);
 
     const totalDays = daysBetween(from, to) + 1;
-    const byDay = new Map<string, { income: number; expense: number }>();
+    const byDay = new Map<string, { income: number; expense: number; cardExpense: number }>();
     rows
-      .filter((row: any) => row.status === "pago")
+      .filter((row: any) => row.tipo === "despesa" && row.forma_pagamento === "cartao")
       .forEach((row: any) => {
         const key = String(row.competencia).slice(0, 10);
-        const entry = byDay.get(key) || { income: 0, expense: 0 };
-        if (row.tipo === "receita") entry.income += cents(row.valor_cents);
-        else entry.expense += cents(row.valor_cents);
+        const entry = byDay.get(key) || { income: 0, expense: 0, cardExpense: 0 };
+        entry.cardExpense += cents(row.valor_cents);
         byDay.set(key, entry);
       });
+    balanceEntries.forEach((entry) => {
+      const date = getFinanceCashDate(entry);
+      if (!date || date < from || date > to) return;
+      const daily = byDay.get(date) || { income: 0, expense: 0, cardExpense: 0 };
+      if (entry.type === "receita") daily.income += cents(entry.amountCents);
+      else daily.expense += cents(entry.amountCents);
+      byDay.set(date, daily);
+    });
     const cashflow = Array.from({ length: totalDays }, (_, index) => {
       const date = addDays(from, index);
-      const entry = byDay.get(date) || { income: 0, expense: 0 };
+      const entry = byDay.get(date) || { income: 0, expense: 0, cardExpense: 0 };
       return {
         date,
         label: `${date.slice(8, 10)}/${date.slice(5, 7)}`,
         incomeCents: entry.income,
         expenseCents: entry.expense,
+        cardExpenseCents: entry.cardExpense,
         netCents: entry.income - entry.expense,
       };
     });
@@ -392,7 +415,7 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
     const insight = topCategory
       ? {
           title: `${topCategory.name} lidera seus gastos`,
-          body: `${topCategory.share}% das saídas do período estão nessa categoria. Peça à MárcIA para comparar com outros períodos.`,
+          body: `${topCategory.share}% dos gastos do período estão nessa categoria. Peça à MárcIA para comparar com outros períodos.`,
           tone: topCategory.share >= 40 ? ("attention" as const) : ("neutral" as const),
         }
       : leftoverCents >= 0
@@ -416,6 +439,7 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
         availableCents,
         receivedCents,
         spentCents,
+        cardExpenseCents,
         netCents,
         pendingIncomeCents,
         pendingExpenseCents,
@@ -476,6 +500,7 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
           amountCents: cents(row.valor_cents),
           date: row.competencia,
           status: row.status,
+          cardSettlement: readFinanceCardSettlement(row.metadata),
           category: category?.nome || null,
           categoryColor: category?.cor || null,
           source: row.fonte || "manual",
@@ -502,15 +527,17 @@ export const listFinanceTransactions = createServerFn({ method: "POST" })
       items: FinanceTransactionDetail[];
       categories: Array<{ id: string; name: string; color: string; type: string; active: boolean }>;
       accounts: Array<{ id: string; name: string }>;
+      unpaidCardCents: number;
+      unpaidCardCount: number;
     }> => {
       await authorize(context, data.companyId);
       const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
       const db = supabaseAdmin as any;
-      const [rows, categories, accounts, cards] = await Promise.all([
+      const [rows, categories, accounts, cards, unpaidCardRows] = await Promise.all([
         db
           .from("fin_lancamento")
           .select(
-            "id,tipo,descricao,estabelecimento,valor_cents,status,vencimento,pago_em,competencia,ocorrido_em,categoria_id,conta_id,cartao_id,fatura_id,forma_pagamento,fonte,anexo_url,observacao,original_input,parcela_numero,parcela_total,created_at",
+            "id,tipo,descricao,estabelecimento,valor_cents,status,vencimento,pago_em,competencia,ocorrido_em,categoria_id,conta_id,cartao_id,fatura_id,forma_pagamento,metadata,fonte,anexo_url,observacao,original_input,parcela_numero,parcela_total,created_at",
           )
           .eq("company_id", data.companyId)
           .neq("status", "cancelado")
@@ -524,8 +551,26 @@ export const listFinanceTransactions = createServerFn({ method: "POST" })
           .select("id,nome,tipo,cor,ativo")
           .eq("company_id", data.companyId)
           .order("nome"),
-        db.from("fin_conta").select("id,nome").eq("company_id", data.companyId).order("nome"),
+        db
+          .from("fin_conta")
+          .select("id,nome")
+          .eq("company_id", data.companyId)
+          .eq("ativo", true)
+          .order("nome"),
         db.from("fin_cartao").select("id,nome,ultimos_quatro").eq("company_id", data.companyId),
+        loadFinanceRows<any>(({ from, to }) =>
+          db
+            .from("fin_lancamento")
+            .select("id,valor_cents,created_at")
+            .eq("company_id", data.companyId)
+            .eq("tipo", "despesa")
+            .eq("forma_pagamento", "cartao")
+            .eq("metadata->>card_settlement", "pending")
+            .neq("status", "cancelado")
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to),
+        ),
       ]);
       const failed = [rows, categories, accounts, cards].find((r) => r.error)?.error;
       if (failed) throw new Error(failed.message);
@@ -535,8 +580,10 @@ export const listFinanceTransactions = createServerFn({ method: "POST" })
       return {
         items: (rows.data || []).map((row: any): FinanceTransactionDetail => {
           const category = categoryById.get(row.categoria_id) as any;
-          const account = accountById.get(row.conta_id) as any;
+          const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
+          const account = accountById.get(row.conta_id || metadata.card_paid_account_id) as any;
           const card = cardById.get(row.cartao_id) as any;
+          const cardSettlement = readFinanceCardSettlement(row.metadata);
           return {
             id: row.id,
             date: row.competencia,
@@ -554,7 +601,8 @@ export const listFinanceTransactions = createServerFn({ method: "POST" })
             card: card
               ? `${card.nome}${card.ultimos_quatro ? ` •${card.ultimos_quatro}` : ""}`
               : null,
-            cardLinked: Boolean(row.cartao_id || row.fatura_id),
+            cardLinked: Boolean(row.cartao_id || row.fatura_id || cardSettlement === "paid"),
+            cardSettlement,
             source: row.fonte || "manual",
             hasAttachment: Boolean(row.anexo_url),
             status: row.status,
@@ -576,6 +624,11 @@ export const listFinanceTransactions = createServerFn({ method: "POST" })
           active: Boolean(r.ativo),
         })),
         accounts: (accounts.data || []).map((r: any) => ({ id: r.id, name: r.nome })),
+        unpaidCardCents: unpaidCardRows.reduce(
+          (sum: number, row: any) => sum + cents(row.valor_cents),
+          0,
+        ),
+        unpaidCardCount: unpaidCardRows.length,
       };
     },
   );
@@ -607,12 +660,12 @@ export const getFinancePlanner = createServerFn({ method: "POST" })
       db
         .from("fin_lancamento")
         .select(
-          "id,descricao,valor_cents,tipo,status,vencimento,pago_em,competencia,ocorrido_em,categoria_id,forma_pagamento,fonte,observacao,recorrencia_id",
+          "id,descricao,valor_cents,tipo,status,vencimento,pago_em,competencia,ocorrido_em,categoria_id,forma_pagamento,metadata,fonte,observacao,recorrencia_id",
         )
         .eq("company_id", data.companyId)
         .neq("status", "cancelado")
         .or(
-          `and(vencimento.gte.${first},vencimento.lte.${last}),and(competencia.gte.${first},competencia.lte.${last})`,
+          `and(vencimento.gte.${first},vencimento.lte.${last}),and(competencia.gte.${first},competencia.lte.${last}),and(pago_em.gte.${first},pago_em.lte.${last})`,
         )
         .limit(3000),
       db
@@ -630,8 +683,14 @@ export const getFinancePlanner = createServerFn({ method: "POST" })
     const items: FinancePlannerItem[] = [];
     const recurrenceDates = new Set<string>();
     for (const row of entries.data || []) {
+      const cardSettlement = readFinanceCardSettlement(row.metadata);
       const paid = row.status === "pago";
-      const date = paid ? row.pago_em || row.competencia : row.vencimento;
+      const date =
+        cardSettlement === "pending"
+          ? row.competencia
+          : paid
+            ? row.pago_em || row.competencia
+            : row.vencimento;
       if (!date || date < first || date > last) continue;
       if (row.recorrencia_id) recurrenceDates.add(`${row.recorrencia_id}:${date}`);
       items.push({
@@ -642,6 +701,7 @@ export const getFinancePlanner = createServerFn({ method: "POST" })
         amountCents: cents(row.valor_cents),
         type: row.tipo,
         status: row.status,
+        cardSettlement,
         kind: paid ? "movimentacao" : "conta",
         recurring: Boolean(row.recorrencia_id),
         category: (categoryName.get(row.categoria_id) as string) || null,
@@ -716,6 +776,7 @@ export const addFinanceTransaction = createServerFn({ method: "POST" })
       const paymentMethod = input?.paymentMethod
         ? String(input.paymentMethod).trim() || null
         : null;
+      const cardSettlementPending = type === "despesa" && paymentMethod === "cartao";
       const merchant = input?.merchant ? String(input.merchant).trim().slice(0, 160) || null : null;
       const note = input?.note ? String(input.note).trim().slice(0, 500) || null : null;
       const status =
@@ -751,8 +812,9 @@ export const addFinanceTransaction = createServerFn({ method: "POST" })
         amountCents,
         date,
         categoryId,
-        accountId,
+        accountId: cardSettlementPending ? null : accountId,
         paymentMethod,
+        cardSettlementPending,
         merchant,
         note,
         status,
@@ -805,11 +867,12 @@ export const addFinanceTransaction = createServerFn({ method: "POST" })
         categoria_id: data.categoryId,
         conta_id: data.accountId,
         forma_pagamento: data.paymentMethod,
+        metadata: financeCardTransactionMetadata(data.type, data.paymentMethod),
         estabelecimento: data.merchant,
         observacao: data.note,
         status: data.status,
         vencimento: date,
-        pago_em: data.status === "pago" ? date : null,
+        pago_em: data.cardSettlementPending ? null : data.status === "pago" ? date : null,
         competencia: date,
         ocorrido_em: `${date}T12:00:00.000Z`,
         fonte: data.source,
@@ -883,7 +946,7 @@ export const updateFinanceTransaction = createServerFn({ method: "POST" })
     const { data: current, error: currentError } = await db
       .from("fin_lancamento")
       .select(
-        "id,status,ocorrido_em,competencia,vencimento,pago_em,categoria_id,cartao_id,fatura_id,forma_pagamento,tipo,valor_cents",
+        "id,status,ocorrido_em,competencia,vencimento,pago_em,categoria_id,conta_id,cartao_id,fatura_id,forma_pagamento,metadata,tipo,valor_cents",
       )
       .eq("id", data.transactionId)
       .eq("company_id", data.companyId)
@@ -892,15 +955,27 @@ export const updateFinanceTransaction = createServerFn({ method: "POST" })
     if (currentError) throw new Error(currentError.message);
     if (!current) throw new Error("Lançamento não encontrado ou já removido.");
     const cardLinked = Boolean(current.cartao_id || current.fatura_id);
+    const cardSettlement = readFinanceCardSettlement(current.metadata);
+    const cardAlreadySettled = cardSettlement === "paid";
     if (
-      cardLinked &&
+      cardSettlement === "pending" &&
+      (data.type !== "despesa" || data.paymentMethod !== "cartao")
+    ) {
+      throw new Error(
+        "Este gasto ainda aguarda o pagamento do cartão. Para trocar o tipo ou a forma de pagamento, cancele e registre-o novamente.",
+      );
+    }
+    if (
+      (cardLinked || cardAlreadySettled) &&
       (data.amountCents !== cents(current.valor_cents) ||
         data.type !== current.tipo ||
         data.date !== current.competencia ||
         data.paymentMethod !== current.forma_pagamento)
     ) {
       throw new Error(
-        "Este lançamento está vinculado a uma fatura de cartão. Valor, tipo, competência e forma de pagamento só podem ser alterados pela área do cartão.",
+        cardAlreadySettled
+          ? "Este gasto no cartão já foi liquidado. Valor, tipo, competência e forma de pagamento estão bloqueados para preservar o saldo da conta."
+          : "Este lançamento está vinculado a uma fatura de cartão. Valor, tipo, competência e forma de pagamento só podem ser alterados pela área do cartão.",
       );
     }
 
@@ -947,6 +1022,20 @@ export const updateFinanceTransaction = createServerFn({ method: "POST" })
       pago_em: nextPaidAt,
       status: nextStatus,
     };
+    const nextIsCardPurchase = data.type === "despesa" && data.paymentMethod === "cartao";
+    const currentMetadata =
+      current.metadata && typeof current.metadata === "object" && !Array.isArray(current.metadata)
+        ? { ...current.metadata }
+        : {};
+    if (nextIsCardPurchase && !cardAlreadySettled) {
+      currentMetadata.card_settlement = "pending";
+      updates.metadata = currentMetadata;
+      updates.conta_id = null;
+      updates.pago_em = null;
+    } else if (cardSettlement === "pending" && !nextIsCardPurchase) {
+      delete currentMetadata.card_settlement;
+      updates.metadata = currentMetadata;
+    }
     if (
       data.date !== current.competencia &&
       typeof current.ocorrido_em === "string" &&
@@ -960,6 +1049,9 @@ export const updateFinanceTransaction = createServerFn({ method: "POST" })
       .update(updates)
       .eq("id", data.transactionId)
       .eq("company_id", data.companyId);
+    if (cardSettlement === "pending") {
+      updateQuery = updateQuery.eq("metadata->>card_settlement", "pending");
+    }
     if (!cardLinked) updateQuery = updateQuery.is("cartao_id", null).is("fatura_id", null);
     const { data: updated, error: updateError } = await updateQuery.select("id").maybeSingle();
     if (updateError) throw new Error(updateError.message);
@@ -982,28 +1074,36 @@ export const cancelFinanceTransaction = createServerFn({ method: "POST" })
     const db = supabaseAdmin as any;
     const { data: current, error: currentError } = await db
       .from("fin_lancamento")
-      .select("id,cartao_id,fatura_id")
+      .select("id,cartao_id,fatura_id,metadata")
       .eq("id", data.transactionId)
       .eq("company_id", data.companyId)
       .neq("status", "cancelado")
       .maybeSingle();
     if (currentError) throw new Error(currentError.message);
     if (!current) throw new Error("Lançamento não encontrado ou já removido.");
+    const cardSettlement = readFinanceCardSettlement(current.metadata);
+    if (cardSettlement === "paid") {
+      throw new Error(
+        "Este gasto no cartão já foi liquidado. O cancelamento exige estornar o pagamento da conta.",
+      );
+    }
     if (current.cartao_id || current.fatura_id) {
       throw new Error(
         "Este lançamento está vinculado a uma fatura de cartão. Remova-o pela área do cartão para preservar o total da fatura.",
       );
     }
-    const { data: canceled, error } = await db
+    let cancelQuery = db
       .from("fin_lancamento")
       .update({ status: "cancelado" })
       .eq("id", data.transactionId)
       .eq("company_id", data.companyId)
       .is("cartao_id", null)
       .is("fatura_id", null)
-      .neq("status", "cancelado")
-      .select("id")
-      .maybeSingle();
+      .neq("status", "cancelado");
+    if (cardSettlement === "pending") {
+      cancelQuery = cancelQuery.eq("metadata->>card_settlement", "pending");
+    }
+    const { data: canceled, error } = await cancelQuery.select("id").maybeSingle();
     if (error) throw new Error(error.message);
     if (!canceled)
       throw new Error("O lançamento mudou de estado; atualize a tela e tente novamente.");
@@ -1111,12 +1211,13 @@ export const getFinanceCalendar = createServerFn({ method: "POST" })
     const [bills, recurrences] = await Promise.all([
       db
         .from("fin_lancamento")
-        .select("id,descricao,valor_cents,tipo,status,vencimento")
+        .select("id,descricao,valor_cents,tipo,status,vencimento,pago_em,competencia,metadata")
         .eq("company_id", data.companyId)
-        .gte("vencimento", data.first)
-        .lte("vencimento", data.last)
         .neq("status", "cancelado")
-        .order("vencimento"),
+        .or(
+          `and(vencimento.gte.${data.first},vencimento.lte.${data.last}),and(competencia.gte.${data.first},competencia.lte.${data.last}),and(pago_em.gte.${data.first},pago_em.lte.${data.last})`,
+        )
+        .order("competencia"),
       db
         .from("fin_recorrencia")
         .select("id,descricao,valor_cents,tipo,proxima_data")
@@ -1129,15 +1230,29 @@ export const getFinanceCalendar = createServerFn({ method: "POST" })
     if (bills.error) throw new Error(bills.error.message);
     if (recurrences.error) throw new Error(recurrences.error.message);
     return [
-      ...(bills.data || []).map((row: any) => ({
-        id: `bill-${row.id}`,
-        date: row.vencimento,
-        title: row.descricao,
-        amountCents: Number(row.valor_cents || 0),
-        type: row.tipo,
-        status: row.status,
-        recurring: false,
-      })),
+      ...(bills.data || [])
+        .map((row: any) => {
+          const cardSettlement = readFinanceCardSettlement(row.metadata);
+          return {
+            id: `bill-${row.id}`,
+            date:
+              cardSettlement === "pending"
+                ? row.competencia
+                : row.status === "pago"
+                  ? row.pago_em || row.competencia
+                  : row.vencimento,
+            title: row.descricao,
+            amountCents: Number(row.valor_cents || 0),
+            type: row.tipo,
+            status: row.status,
+            cardSettlement,
+            recurring: false,
+          };
+        })
+        .filter(
+          (item: FinanceCalendarItem) =>
+            item.date && item.date >= data.first && item.date <= data.last,
+        ),
       ...(recurrences.data || []).map((row: any) => ({
         id: `recurrence-${row.id}`,
         date: row.proxima_data,
