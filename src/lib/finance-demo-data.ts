@@ -444,7 +444,8 @@ export function buildDemoTransactions(today: Date = new Date()): FinanceTransact
 
 /** Histórico fictício do cartão; todos os gastos demo ficam abertos até a simulação local. */
 export function buildDemoCardLedger(today: Date = new Date()): FinanceCardLedger {
-  const items = buildDemoTransactions(today)
+  const transactions = buildDemoTransactions(today);
+  const items = transactions
     .filter(
       (transaction) => transaction.type === "despesa" && transaction.paymentMethod === "cartao",
     )
@@ -467,10 +468,39 @@ export function buildDemoCardLedger(today: Date = new Date()): FinanceCardLedger
       paymentAccountName: null,
       paymentBatchId: null,
     }));
+  const allPaymentExpenses = transactions.filter(
+    (transaction) => transaction.type === "despesa" && transaction.status === "pago",
+  );
+  const allPaymentCategoryMap = new Map<
+    string,
+    { id: string; name: string; color: string; amountCents: number; expenseCount: number }
+  >();
+  for (const transaction of allPaymentExpenses) {
+    const id = transaction.category || "uncategorized";
+    const current = allPaymentCategoryMap.get(id) || {
+      id,
+      name: transaction.category || "Sem categoria",
+      color: transaction.categoryColor || "#94A3B8",
+      amountCents: 0,
+      expenseCount: 0,
+    };
+    current.amountCents += transaction.amountCents;
+    current.expenseCount += 1;
+    allPaymentCategoryMap.set(id, current);
+  }
+  const allPaymentExpenseCategories = Array.from(allPaymentCategoryMap.values()).sort(
+    (first, second) => second.amountCents - first.amountCents,
+  );
   const pendingItems = items.filter((item) => item.settlement === "pending");
   const settledItems = items.filter((item) => item.settlement === "paid");
   return {
     items,
+    allPaymentExpenseCategories,
+    allPaymentExpenseTotalCents: allPaymentExpenseCategories.reduce(
+      (total, category) => total + category.amountCents,
+      0,
+    ),
+    allPaymentExpenseCount: allPaymentExpenses.length,
     accounts: [],
     pendingTotalCents: pendingItems.reduce((total, item) => total + item.amountCents, 0),
     pendingCount: pendingItems.length,

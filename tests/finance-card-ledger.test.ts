@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
-import { buildDemoCardLedger, settleDemoCardLedger } from "../src/lib/finance-demo-data";
+import {
+  buildDemoCardLedger,
+  buildDemoTransactions,
+  settleDemoCardLedger,
+} from "../src/lib/finance-demo-data";
 
 const serverLedger = readFileSync(
   new URL("../src/lib/finance-card-payment.functions.ts", import.meta.url),
@@ -26,6 +30,17 @@ describe("histórico cumulativo do cartão", () => {
     expect(cardPage).toContain("buildPaymentGroups");
     expect(cardPage).toContain("categoryTotals(groupItems)");
     expect(cardPage).toContain("Histórico antigo sem baixa vinculada");
+    expect(ledgerHandler).toContain("allPaymentExpenseRows");
+    expect(ledgerHandler).toContain('.eq("status", "pago")');
+    const allPaymentQueryStart = ledgerHandler.indexOf(
+      "loadFinanceRows<any>",
+      ledgerHandler.indexOf("loadFinanceRows<any>") + 1,
+    );
+    const allPaymentQueryEnd = ledgerHandler.indexOf('db.from("fin_categoria")');
+    const allPaymentQuery = ledgerHandler.slice(allPaymentQueryStart, allPaymentQueryEnd);
+    expect(allPaymentQuery).not.toContain("forma_pagamento");
+    expect(cardPage).toContain('useState<CategoryScope>("allPayments")');
+    expect(cardPage).toContain("data.allPaymentExpenseCategories");
     expect(paymentBatchMigration).toContain("'card_payment_batch_id', v_batch_id");
     expect(paymentBatchMigration).toContain("GRANT EXECUTE");
   });
@@ -41,6 +56,26 @@ describe("histórico cumulativo do cartão", () => {
     expect(ledger.pendingCount).toBeGreaterThan(1);
     expect(ledger.pendingTotalCents).toBe(sumPending);
     expect(ledger.items.every((item) => item.categoryName.length > 0)).toBe(true);
+  });
+
+  test("soma despesas realizadas por categoria usando todos os meios de pagamento", () => {
+    const today = new Date("2026-11-04T12:00:00");
+    const ledger = buildDemoCardLedger(today);
+    const realizedExpenses = buildDemoTransactions(today).filter(
+      (transaction) => transaction.type === "despesa" && transaction.status === "pago",
+    );
+    const expectedTotal = realizedExpenses.reduce((total, item) => total + item.amountCents, 0);
+    const methods = new Set(realizedExpenses.map((item) => item.paymentMethod));
+    const categoryTotal = ledger.allPaymentExpenseCategories.reduce(
+      (total, item) => total + item.amountCents,
+      0,
+    );
+
+    expect(methods.size).toBeGreaterThan(1);
+    expect(ledger.allPaymentExpenseTotalCents).toBe(expectedTotal);
+    expect(categoryTotal).toBe(expectedTotal);
+    expect(ledger.allPaymentExpenseCount).toBe(realizedExpenses.length);
+    expect(ledger.allPaymentExpenseCategories.length).toBeGreaterThan(1);
   });
 
   test("simular pagamento zera apenas o pendente e preserva cada compra com categoria e data", () => {

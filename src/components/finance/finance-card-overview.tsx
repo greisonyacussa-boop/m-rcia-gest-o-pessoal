@@ -42,7 +42,10 @@ type CategoryTotal = {
   name: string;
   color: string;
   amountCents: number;
+  count: number;
 };
+
+type CategoryScope = "pending" | "all" | "allPayments";
 
 type MonthGroup = {
   month: string;
@@ -72,8 +75,10 @@ function categoryTotals(items: FinanceCardLedgerItem[]): CategoryTotal[] {
       name: item.categoryName,
       color: item.categoryColor,
       amountCents: 0,
+      count: 0,
     };
     current.amountCents += item.amountCents;
+    current.count += 1;
     totals.set(id, current);
   }
   return Array.from(totals.values()).sort((a, b) => b.amountCents - a.amountCents);
@@ -157,7 +162,7 @@ export function FinanceCardOverview({
   onPaid: () => void;
   paymentPanel?: ReactNode;
 }) {
-  const [categoryScope, setCategoryScope] = useState<"pending" | "all">("pending");
+  const [categoryScope, setCategoryScope] = useState<CategoryScope>("allPayments");
   const monthGroups = useMemo(() => buildMonthGroups(data.items), [data.items]);
   const payments = useMemo(() => buildPaymentGroups(data.items), [data.items]);
   const allCategories = useMemo(() => categoryTotals(data.items), [data.items]);
@@ -165,8 +170,22 @@ export function FinanceCardOverview({
     () => categoryTotals(data.items.filter((item) => item.settlement === "pending")),
     [data.items],
   );
-  const chartCategories = categoryScope === "pending" ? openCategories : allCategories;
-  const categoryTotalCents = chartCategories.reduce((sum, item) => sum + item.amountCents, 0);
+  const chartCategories =
+    categoryScope === "pending"
+      ? openCategories
+      : categoryScope === "all"
+        ? allCategories
+        : data.allPaymentExpenseCategories.map((category) => ({
+            id: category.id,
+            name: category.name,
+            color: category.color,
+            amountCents: category.amountCents,
+            count: category.expenseCount,
+          }));
+  const categoryTotalCents =
+    categoryScope === "allPayments"
+      ? data.allPaymentExpenseTotalCents
+      : chartCategories.reduce((sum, item) => sum + item.amountCents, 0);
   const monthlyChart = [...monthGroups]
     .filter((group) => group.month !== "sem-data")
     .reverse()
@@ -237,6 +256,7 @@ export function FinanceCardOverview({
           totalCents={categoryTotalCents}
           scope={categoryScope}
           onScopeChange={setCategoryScope}
+          allPaymentExpenseCount={data.allPaymentExpenseCount}
         />
         <MonthlyChart data={monthlyChart} />
       </section>
@@ -415,22 +435,28 @@ function CategoryDonut({
   totalCents,
   scope,
   onScopeChange,
+  allPaymentExpenseCount,
 }: {
   categories: CategoryTotal[];
   totalCents: number;
-  scope: "pending" | "all";
-  onScopeChange: (scope: "pending" | "all") => void;
+  scope: CategoryScope;
+  onScopeChange: (scope: CategoryScope) => void;
+  allPaymentExpenseCount: number;
 }) {
   return (
     <section className="rounded-2xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="font-display text-base font-black">Maiores categorias</h2>
+          <h2 className="font-display text-base font-black">Despesas por categoria</h2>
           <p className="text-[11px] text-muted-foreground">
-            {scope === "pending" ? "Compras ainda não quitadas" : "Todo o histórico do cartão"}
+            {scope === "pending"
+              ? "Compras de cartão ainda não quitadas"
+              : scope === "all"
+                ? "Todo o histórico de compras no cartão"
+                : `${allPaymentExpenseCount} despesas realizadas · inclui cartão em aberto`}
           </p>
         </div>
-        <div className="flex rounded-xl border border-border p-0.5 text-[10px] font-bold">
+        <div className="flex flex-wrap rounded-xl border border-border p-0.5 text-[10px] font-bold">
           <button
             type="button"
             onClick={() => onScopeChange("pending")}
@@ -443,7 +469,14 @@ function CategoryDonut({
             onClick={() => onScopeChange("all")}
             className={`rounded-lg px-2 py-1.5 ${scope === "all" ? "bg-violet-700 text-white" : "text-muted-foreground"}`}
           >
-            Histórico
+            Só cartão
+          </button>
+          <button
+            type="button"
+            onClick={() => onScopeChange("allPayments")}
+            className={`rounded-lg px-2 py-1.5 ${scope === "allPayments" ? "bg-violet-700 text-white" : "text-muted-foreground"}`}
+          >
+            Todos os meios
           </button>
         </div>
       </div>
@@ -474,7 +507,11 @@ function CategoryDonut({
                   {financeMoney(totalCents)}
                 </strong>
                 <span className="mt-0.5 block text-[10px] text-muted-foreground">
-                  {scope === "pending" ? "em aberto" : "histórico"}
+                  {scope === "pending"
+                    ? "cartão em aberto"
+                    : scope === "all"
+                      ? "cartão histórico"
+                      : "todas as formas"}
                 </span>
               </div>
             </div>
@@ -495,7 +532,13 @@ function CategoryDonut({
           </div>
         </>
       ) : (
-        <EmptyCard message="Nenhum gasto nesta seleção. Use “Histórico” para consultar compras já quitadas." />
+        <EmptyCard
+          message={
+            scope === "allPayments"
+              ? "Ainda não há despesas realizadas para agrupar por categoria."
+              : "Nenhum gasto nesta seleção. Use “Só cartão” ou “Todos os meios” para consultar o histórico."
+          }
+        />
       )}
     </section>
   );

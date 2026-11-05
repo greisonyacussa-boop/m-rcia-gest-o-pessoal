@@ -23,8 +23,19 @@ export type FinanceCardLedgerItem = {
   paymentBatchId: string | null;
 };
 
+export type FinanceExpenseCategoryTotal = {
+  id: string;
+  name: string;
+  color: string;
+  amountCents: number;
+  expenseCount: number;
+};
+
 export type FinanceCardLedger = {
   items: FinanceCardLedgerItem[];
+  allPaymentExpenseCategories: FinanceExpenseCategoryTotal[];
+  allPaymentExpenseTotalCents: number;
+  allPaymentExpenseCount: number;
   accounts: Array<{ id: string; name: string }>;
   pendingTotalCents: number;
   pendingCount: number;
@@ -88,7 +99,7 @@ export const getFinanceCardLedger = createServerFn({ method: "POST" })
     await authorizeFinanceCardAccess(context, data.companyId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const db = supabaseAdmin as any;
-    const [rows, categories, accounts, cards] = await Promise.all([
+    const [rows, allPaymentExpenseRows, categories, accounts, cards] = await Promise.all([
       loadFinanceRows<any>(({ from, to }) =>
         db
           .from("fin_lancamento")
@@ -104,6 +115,18 @@ export const getFinanceCardLedger = createServerFn({ method: "POST" })
           .order("id", { ascending: false })
           .range(from, to),
       ),
+      loadFinanceRows<any>(({ from, to }) =>
+        db
+          .from("fin_lancamento")
+          .select("id,competencia,created_at,categoria_id,valor_cents")
+          .eq("company_id", data.companyId)
+          .eq("tipo", "despesa")
+          .eq("status", "pago")
+          .order("competencia", { ascending: false })
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to),
+      ),
       db.from("fin_categoria").select("id,nome,cor").eq("company_id", data.companyId),
       db.from("fin_conta").select("id,nome,ativo").eq("company_id", data.companyId),
       db.from("fin_cartao").select("id,nome,ultimos_quatro").eq("company_id", data.companyId),
@@ -114,6 +137,24 @@ export const getFinanceCardLedger = createServerFn({ method: "POST" })
     const categoryById = new Map((categories.data || []).map((row: any) => [row.id, row] as const));
     const accountById = new Map((accounts.data || []).map((row: any) => [row.id, row] as const));
     const cardById = new Map((cards.data || []).map((row: any) => [row.id, row] as const));
+    const allPaymentCategoryMap = new Map<string, FinanceExpenseCategoryTotal>();
+    for (const row of allPaymentExpenseRows) {
+      const id = row.categoria_id || "uncategorized";
+      const category = categoryById.get(row.categoria_id) as any;
+      const current = allPaymentCategoryMap.get(id) || {
+        id,
+        name: category?.nome || "Sem categoria",
+        color: category?.cor || "#94A3B8",
+        amountCents: 0,
+        expenseCount: 0,
+      };
+      current.amountCents += cents(row.valor_cents);
+      current.expenseCount += 1;
+      allPaymentCategoryMap.set(id, current);
+    }
+    const allPaymentExpenseCategories = Array.from(allPaymentCategoryMap.values()).sort(
+      (first, second) => second.amountCents - first.amountCents,
+    );
     const items: FinanceCardLedgerItem[] = rows.map((row: any) => {
       const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
       const category = categoryById.get(row.categoria_id) as any;
@@ -154,6 +195,12 @@ export const getFinanceCardLedger = createServerFn({ method: "POST" })
     const settledItems = items.filter((item) => item.settlement === "paid");
     return {
       items,
+      allPaymentExpenseCategories,
+      allPaymentExpenseTotalCents: allPaymentExpenseCategories.reduce(
+        (total, category) => total + category.amountCents,
+        0,
+      ),
+      allPaymentExpenseCount: allPaymentExpenseRows.length,
       accounts: (accounts.data || [])
         .filter((account: any) => account.ativo)
         .map((account: any) => ({ id: account.id, name: account.nome }))

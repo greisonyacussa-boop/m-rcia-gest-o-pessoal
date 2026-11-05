@@ -18,3 +18,11 @@ Verificações finais: 50 testes direcionados passaram; `tsc --noEmit` passou; b
 - [x] **Interpretação do chat:** quando eu disser que paguei uma compra com cartão de crédito, o chat deve registrar `Cartão` como forma de pagamento, e não transformar a resposta em Pix; não assumir Pix quando a forma não estiver clara e perguntar quando necessário.
 - [x] **Acumular até quitar:** somar todas as despesas de cartão ainda não pagas, inclusive de competências/meses anteriores, no total pendente até eu clicar que o cartão foi pago; só nesse clique registrar a baixa do valor total na conta escolhida uma vez, limpar o total pendente para o próximo ciclo e guardar a data e o valor do pagamento. Não usar limite, fechamento ou vencimento para quitar automaticamente.
 - [x] **Aba e histórico por mês/categoria:** ao clicar em Cartão na tela inicial, abrir os detalhes com os gastos, data da compra, categoria, valor e totais por mês; mostrar o acumulado de meses anteriores junto ao mês atual e o histórico das quitações com suas datas e valores, preservando cada compra e suas categorias. Incluir gastos no cartão nos gráficos e categorias como outros gastos, sem reduzir a linha de saldo antes da quitação; preservar o demo sem escrita no banco.
+
+## Novo pedido: despesas por categoria com todas as formas
+
+- [x] **Gráfico consolidado por categoria:** “na aba cartão um gráfico somando todas as categorias e todas formas de pagamento junto para eu saber o total que gastei por categorias”. Na aba Cartão, mostrar por padrão no gráfico de categorias o total histórico das despesas realizadas agrupadas por categoria, somando todos os meios de pagamento (inclusive cartão, Pix, dinheiro, transferência e boleto) sem separar as fatias por forma; excluir receitas e lançamentos cancelados, incluir compras no cartão ainda não quitadas e manter as opções de consulta exclusiva do cartão.
+
+### Validação do gráfico consolidado
+
+35 testes financeiros focados passaram; `tsc --noEmit`, ESLint, Prettier e build de produção passaram. A consulta inclui despesas realizadas de todos os meios e compras de cartão ainda abertas; não foram feitas escritas no banco.
