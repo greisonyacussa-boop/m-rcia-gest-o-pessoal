@@ -26,6 +26,7 @@ import { Route as AppIndexRouteImport } from './routes/app/index'
 import { Route as AppAgendaRouteImport } from './routes/app/agenda'
 import { Route as AppAgenteRouteImport } from './routes/app/agente'
 import { Route as AppCalendarioRouteImport } from './routes/app/calendario'
+import { Route as AppCartaoRouteImport } from './routes/app/cartao'
 import { Route as AppCartoesRouteImport } from './routes/app/cartoes'
 import { Route as AppCheckoutRouteImport } from './routes/app/checkout'
 import { Route as AppClientesRouteImport } from './routes/app/clientes'
@@ -54,6 +55,7 @@ import { Route as CsatTokenRouteImport } from './routes/csat.$token'
 import { Route as DemoIndexRouteImport } from './routes/demo/index'
 import { Route as DemoAgendaRouteImport } from './routes/demo/agenda'
 import { Route as DemoCalendarioRouteImport } from './routes/demo/calendario'
+import { Route as DemoCartaoRouteImport } from './routes/demo/cartao'
 import { Route as DemoCartoesRouteImport } from './routes/demo/cartoes'
 import { Route as DemoClientesRouteImport } from './routes/demo/clientes'
 import { Route as DemoConexoesRouteImport } from './routes/demo/conexoes'
@@ -187,6 +189,11 @@ const AppAgenteRoute = AppAgenteRouteImport.update({
 const AppCalendarioRoute = AppCalendarioRouteImport.update({
   id: '/calendario',
   path: '/calendario',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCartaoRoute = AppCartaoRouteImport.update({
+  id: '/cartao',
+  path: '/cartao',
   getParentRoute: () => AppRoute,
 } as any)
 const AppCartoesRoute = AppCartoesRouteImport.update({
@@ -327,6 +334,11 @@ const DemoAgendaRoute = DemoAgendaRouteImport.update({
 const DemoCalendarioRoute = DemoCalendarioRouteImport.update({
   id: '/calendario',
   path: '/calendario',
+  getParentRoute: () => DemoRoute,
+} as any)
+const DemoCartaoRoute = DemoCartaoRouteImport.update({
+  id: '/cartao',
+  path: '/cartao',
   getParentRoute: () => DemoRoute,
 } as any)
 const DemoCartoesRoute = DemoCartoesRouteImport.update({
@@ -590,6 +602,7 @@ export interface FileRoutesByFullPath {
   '/app/agenda': typeof AppAgendaRoute
   '/app/agente': typeof AppAgenteRoute
   '/app/calendario': typeof AppCalendarioRoute
+  '/app/cartao': typeof AppCartaoRoute
   '/app/cartoes': typeof AppCartoesRoute
   '/app/checkout': typeof AppCheckoutRoute
   '/app/clientes': typeof AppClientesRoute
@@ -617,6 +630,7 @@ export interface FileRoutesByFullPath {
   '/csat/$token': typeof CsatTokenRoute
   '/demo/agenda': typeof DemoAgendaRoute
   '/demo/calendario': typeof DemoCalendarioRoute
+  '/demo/cartao': typeof DemoCartaoRoute
   '/demo/cartoes': typeof DemoCartoesRoute
   '/demo/clientes': typeof DemoClientesRoute
   '/demo/conexoes': typeof DemoConexoesRoute
@@ -682,6 +696,7 @@ export interface FileRoutesByTo {
   '/app/agenda': typeof AppAgendaRoute
   '/app/agente': typeof AppAgenteRoute
   '/app/calendario': typeof AppCalendarioRoute
+  '/app/cartao': typeof AppCartaoRoute
   '/app/cartoes': typeof AppCartoesRoute
   '/app/checkout': typeof AppCheckoutRoute
   '/app/clientes': typeof AppClientesRoute
@@ -709,6 +724,7 @@ export interface FileRoutesByTo {
   '/csat/$token': typeof CsatTokenRoute
   '/demo/agenda': typeof DemoAgendaRoute
   '/demo/calendario': typeof DemoCalendarioRoute
+  '/demo/cartao': typeof DemoCartaoRoute
   '/demo/cartoes': typeof DemoCartoesRoute
   '/demo/clientes': typeof DemoClientesRoute
   '/demo/conexoes': typeof DemoConexoesRoute
@@ -778,6 +794,7 @@ export interface FileRoutesById {
   '/app/agenda': typeof AppAgendaRoute
   '/app/agente': typeof AppAgenteRoute
   '/app/calendario': typeof AppCalendarioRoute
+  '/app/cartao': typeof AppCartaoRoute
   '/app/cartoes': typeof AppCartoesRoute
   '/app/checkout': typeof AppCheckoutRoute
   '/app/clientes': typeof AppClientesRoute
@@ -805,6 +822,7 @@ export interface FileRoutesById {
   '/csat/$token': typeof CsatTokenRoute
   '/demo/agenda': typeof DemoAgendaRoute
   '/demo/calendario': typeof DemoCalendarioRoute
+  '/demo/cartao': typeof DemoCartaoRoute
   '/demo/cartoes': typeof DemoCartoesRoute
   '/demo/clientes': typeof DemoClientesRoute
   '/demo/conexoes': typeof DemoConexoesRoute
@@ -875,6 +893,7 @@ export interface FileRouteTypes {
     | '/app/agenda'
     | '/app/agente'
     | '/app/calendario'
+    | '/app/cartao'
     | '/app/cartoes'
     | '/app/checkout'
     | '/app/clientes'
@@ -902,6 +921,7 @@ export interface FileRouteTypes {
     | '/csat/$token'
     | '/demo/agenda'
     | '/demo/calendario'
+    | '/demo/cartao'
     | '/demo/cartoes'
     | '/demo/clientes'
     | '/demo/conexoes'
@@ -967,6 +987,7 @@ export interface FileRouteTypes {
     | '/app/agenda'
     | '/app/agente'
     | '/app/calendario'
+    | '/app/cartao'
     | '/app/cartoes'
     | '/app/checkout'
     | '/app/clientes'
@@ -994,6 +1015,7 @@ export interface FileRouteTypes {
     | '/csat/$token'
     | '/demo/agenda'
     | '/demo/calendario'
+    | '/demo/cartao'
     | '/demo/cartoes'
     | '/demo/clientes'
     | '/demo/conexoes'
@@ -1062,6 +1084,7 @@ export interface FileRouteTypes {
     | '/app/agenda'
     | '/app/agente'
     | '/app/calendario'
+    | '/app/cartao'
     | '/app/cartoes'
     | '/app/checkout'
     | '/app/clientes'
@@ -1089,6 +1112,7 @@ export interface FileRouteTypes {
     | '/csat/$token'
     | '/demo/agenda'
     | '/demo/calendario'
+    | '/demo/cartao'
     | '/demo/cartoes'
     | '/demo/clientes'
     | '/demo/conexoes'
@@ -1286,6 +1310,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCalendarioRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/cartao': {
+      id: '/app/cartao'
+      path: '/cartao'
+      fullPath: '/app/cartao'
+      preLoaderRoute: typeof AppCartaoRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/cartoes': {
       id: '/app/cartoes'
       path: '/cartoes'
@@ -1480,6 +1511,13 @@ declare module '@tanstack/react-router' {
       path: '/calendario'
       fullPath: '/demo/calendario'
       preLoaderRoute: typeof DemoCalendarioRouteImport
+      parentRoute: typeof DemoRoute
+    }
+    '/demo/cartao': {
+      id: '/demo/cartao'
+      path: '/cartao'
+      fullPath: '/demo/cartao'
+      preLoaderRoute: typeof DemoCartaoRouteImport
       parentRoute: typeof DemoRoute
     }
     '/demo/cartoes': {
@@ -1837,6 +1875,7 @@ interface AppRouteChildren {
   AppAgendaRoute: typeof AppAgendaRoute
   AppAgenteRoute: typeof AppAgenteRoute
   AppCalendarioRoute: typeof AppCalendarioRoute
+  AppCartaoRoute: typeof AppCartaoRoute
   AppCartoesRoute: typeof AppCartoesRoute
   AppCheckoutRoute: typeof AppCheckoutRoute
   AppClientesRoute: typeof AppClientesRoute
@@ -1868,6 +1907,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAgendaRoute: AppAgendaRoute,
   AppAgenteRoute: AppAgenteRoute,
   AppCalendarioRoute: AppCalendarioRoute,
+  AppCartaoRoute: AppCartaoRoute,
   AppCartoesRoute: AppCartoesRoute,
   AppCheckoutRoute: AppCheckoutRoute,
   AppClientesRoute: AppClientesRoute,
@@ -1900,6 +1940,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 interface DemoRouteChildren {
   DemoAgendaRoute: typeof DemoAgendaRoute
   DemoCalendarioRoute: typeof DemoCalendarioRoute
+  DemoCartaoRoute: typeof DemoCartaoRoute
   DemoCartoesRoute: typeof DemoCartoesRoute
   DemoClientesRoute: typeof DemoClientesRoute
   DemoConexoesRoute: typeof DemoConexoesRoute
@@ -1927,6 +1968,7 @@ interface DemoRouteChildren {
 const DemoRouteChildren: DemoRouteChildren = {
   DemoAgendaRoute: DemoAgendaRoute,
   DemoCalendarioRoute: DemoCalendarioRoute,
+  DemoCartaoRoute: DemoCartaoRoute,
   DemoCartoesRoute: DemoCartoesRoute,
   DemoClientesRoute: DemoClientesRoute,
   DemoConexoesRoute: DemoConexoesRoute,

@@ -9,6 +9,14 @@ import {
   loadFinanceRows,
   summarizeFinanceCash,
 } from "./finance-balance";
+import {
+  canonicalizeFinancePaymentMethod,
+  financePaymentMethodQuestion,
+  lastExplicitFinancePaymentMethod,
+  needsFinancePaymentMethod,
+  resolveExplicitFinancePaymentMethod,
+  type FinancePaymentMethod,
+} from "./finance-payment-method";
 
 export type FinanceCommandIntent =
   | "record_expense"
@@ -21,7 +29,7 @@ export type FinanceCommandIntent =
   | "unknown";
 
 type FinanceType = "receita" | "despesa";
-type PaymentMethod = "pix" | "cartao" | "dinheiro" | "transferencia" | "boleto" | "outro";
+type PaymentMethod = FinancePaymentMethod;
 type PaymentStatus = "paid" | "pending";
 
 export type FinanceCommandDraft = {
@@ -67,15 +75,6 @@ const INTENTS = new Set<FinanceCommandIntent>([
   "query_summary",
   "unknown",
 ]);
-const PAYMENT_METHODS = new Set<PaymentMethod>([
-  "pix",
-  "cartao",
-  "dinheiro",
-  "transferencia",
-  "boleto",
-  "outro",
-]);
-
 function cleanString(value: unknown, max = 500): string | null {
   if (typeof value !== "string") return null;
   const cleaned = value.trim().slice(0, max);
@@ -111,7 +110,7 @@ function normalizeDraft(value: unknown): FinanceCommandDraft {
   const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   const intent = cleanString(raw.intent, 30) as FinanceCommandIntent | null;
   const type = cleanString(raw.type, 12);
-  const method = cleanString(raw.paymentMethod, 20) as PaymentMethod | null;
+  const method = canonicalizeFinancePaymentMethod(cleanString(raw.paymentMethod, 20));
   const status = cleanString(raw.paymentStatus, 12);
   const frequency = cleanString(raw.frequency, 16);
   const period = cleanString(raw.queryPeriod, 12);
@@ -124,7 +123,7 @@ function normalizeDraft(value: unknown): FinanceCommandDraft {
     categoryName: cleanString(raw.categoryName, 120),
     accountId: cleanUuid(raw.accountId),
     accountName: cleanString(raw.accountName, 120),
-    paymentMethod: method && PAYMENT_METHODS.has(method) ? method : null,
+    paymentMethod: method === "unknown" ? null : method,
     paymentStatus: status === "paid" || status === "pending" ? status : null,
     date: /^\d{4}-\d{2}-\d{2}$/.test(String(raw.date || "")) ? String(raw.date) : null,
     frequency:
@@ -161,11 +160,13 @@ function mergeDraft(previous: FinanceCommandDraft | null, next: FinanceCommandDr
   ) {
     return next;
   }
+  const updates: Record<string, unknown> = Object.fromEntries(
+    Object.entries(next).filter(([, value]) => value != null && value !== ""),
+  );
+  if ("paymentMethod" in next) updates.paymentMethod = next.paymentMethod;
   return normalizeDraft({
     ...previous,
-    ...Object.fromEntries(
-      Object.entries(next).filter(([, value]) => value != null && value !== ""),
-    ),
+    ...updates,
     intent: previous.intent,
   });
 }
@@ -232,6 +233,9 @@ function requiredFields(draft: FinanceCommandDraft): string[] {
     !draft.summary ? "summary" : "",
     !draft.amountCents ? "amount" : "",
     draft.accountName && !draft.accountId ? "account" : "",
+    needsFinancePaymentMethod(draft.intent, draft.paymentStatus, draft.paymentMethod)
+      ? "payment_method"
+      : "",
   ].filter(Boolean);
 }
 
@@ -282,6 +286,7 @@ function questionFor(field: string, context: FinanceContext) {
       quickReplies: context.accounts.slice(0, 6).map((row) => row.name),
     };
   }
+  if (field === "payment_method") return financePaymentMethodQuestion();
   return { message: "O que ficou faltando nessa informação?", quickReplies: [] };
 }
 
@@ -399,6 +404,9 @@ REGRAS INEGOCIÁVEIS:
 - "conta", "boleto", "vai vencer", "tenho que pagar" ou "me lembre" significa create_bill e pagamento pendente.
 - "todo mês/semana/ano" significa create_recurring.
 - Se o usuário pedir saldo, resumo, quanto gastou ou quanto entrou, use query_summary e queryPeriod today|week|month|all.
+- paymentMethod é um enum: "pix", "cartao", "dinheiro", "transferencia", "boleto", "outro" ou null. "cartão", "cartão de crédito", "cartao de credito" e "crédito" viram "cartao"; "Pix" vira "pix". "cartão de débito" e "débito" não são crédito: deixe null para perguntar. Nunca escolha Pix por padrão.
+- Exemplo: "paguei no cartão de crédito" => paymentMethod="cartao"; "paguei no Pix" => paymentMethod="pix"; "paguei no débito" => paymentMethod=null.
+- Em uma despesa ou receita paga, se o usuário não disser explicitamente a forma de pagamento, deixe paymentMethod null; o sistema fará a pergunta. Não copie uma forma de pagamento inferida pela IA ou de um rascunho sem menção explícita do usuário.
 - categoryId e accountId só podem vir do CONTEXTO REAL.
 - accountName só pode receber o nome exato de uma conta do CONTEXTO REAL. Marca de cartão ou banco citada apenas como meio de pagamento não é uma conta cadastrada: nesse caso, use paymentMethod e deixe accountName/accountId nulos.
 - Se a pessoa pedir explicitamente uma conta que não existe no CONTEXTO REAL, preserve accountName e mantenha accountId nulo para o sistema perguntar antes de registrar.
@@ -456,7 +464,7 @@ async function answerSummary(companyId: string, period: FinanceCommandDraft["que
     rows.map(financeBalanceEntryFromRow),
     financeCashSummaryRange(period || "month"),
   );
-  return `No período, entraram ${money(summary.receivedCents)}, saíram ${money(summary.spentCents)}, os gastos no cartão somam ${money(summary.cardExpenseCents)} (com ${money(summary.cardPendingCents)} aguardando quitação) e há ${money(summary.pendingExpenseCents)} para pagar. Resultado de caixa: ${money(summary.netCents)}.`;
+  return `No período, entraram ${money(summary.receivedCents)}, saíram ${money(summary.spentCents)}. Gastos no cartão neste período: ${money(summary.cardExpenseCents)}. Total pendente do cartão (todos os meses): ${money(summary.cardPendingCents)}. Há ${money(summary.pendingExpenseCents)} para pagar. Resultado de caixa: ${money(summary.netCents)}.`;
 }
 
 export const interpretFinanceCommand = createServerFn({ method: "POST" })
@@ -521,6 +529,16 @@ export const interpretFinanceCommand = createServerFn({ method: "POST" })
     }
     const financeContext = await loadContext(context, data.companyId);
     const previous = command ? normalizeDraft(command.draft) : null;
+    const previousExplicitPayment = lastExplicitFinancePaymentMethod(command?.messages);
+    const trustedPrevious = previous
+      ? {
+          ...previous,
+          paymentMethod:
+            previousExplicitPayment && previousExplicitPayment !== "unknown"
+              ? previousExplicitPayment
+              : null,
+        }
+      : null;
     const creditRef = `app-finance:${crypto.randomUUID()}`;
     const consumed = await db.rpc("consume_ai_credit", {
       _company_id: data.companyId,
@@ -533,7 +551,7 @@ export const interpretFinanceCommand = createServerFn({ method: "POST" })
     try {
       interpreted = await requestDraft(
         data.message,
-        previous,
+        trustedPrevious,
         financeContext,
         data.imageDataUrl,
         data.pdf,
@@ -546,7 +564,12 @@ export const interpretFinanceCommand = createServerFn({ method: "POST" })
       }
       throw error;
     }
-    const draft = resolveEntities(mergeDraft(previous, interpreted), financeContext);
+    const explicitPayment = resolveExplicitFinancePaymentMethod(data.message, command?.messages);
+    const draft = resolveEntities(
+      mergeDraft(trustedPrevious, { ...interpreted, paymentMethod: explicitPayment }),
+      financeContext,
+    );
+    draft.paymentMethod = explicitPayment;
     if (!draft.date && ["record_expense", "record_income"].includes(draft.intent))
       draft.date = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
     if (!draft.type && draft.intent === "record_expense") draft.type = "despesa";

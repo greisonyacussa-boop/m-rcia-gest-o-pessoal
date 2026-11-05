@@ -123,13 +123,19 @@ export function FinanceOverview({
           }
           tone="rose"
         />
-        <Metric
-          icon={CreditCard}
-          label="No cartão"
-          value={money(totals.cardExpenseCents)}
-          helper="compras na competência"
-          tone="violet"
-        />
+        <Link
+          to={links.card}
+          aria-label="Abrir o histórico e os detalhes do cartão de crédito"
+          className="block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+        >
+          <Metric
+            icon={CreditCard}
+            label="Cartão · em aberto"
+            value={money(totals.cardPendingCents)}
+            helper={`gastos neste período: ${money(totals.cardExpenseCents)} · ver detalhes`}
+            tone="violet"
+          />
+        </Link>
         <Metric
           icon={PiggyBank}
           label="Sobra prevista"
@@ -404,7 +410,7 @@ function Categories({ data }: { data: FinanceOverviewData }) {
           </ResponsiveContainer>
           <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
             <strong className="font-display text-sm font-black">
-              {money(data.totals.spentCents)}
+              {money(data.totals.categorySpendCents)}
             </strong>
           </div>
         </div>

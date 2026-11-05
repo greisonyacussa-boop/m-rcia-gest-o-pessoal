@@ -1,8 +1,8 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-// Área antiga da demonstração: agora faz parte de outra tela.
+// Mantém links antigos válidos após a criação da área demo de cartão.
 export const Route = createFileRoute("/demo/cartoes")({
   beforeLoad: () => {
-    throw redirect({ to: "/demo/movimentacoes", replace: true });
+    throw redirect({ to: "/demo/cartao", replace: true });
   },
 });

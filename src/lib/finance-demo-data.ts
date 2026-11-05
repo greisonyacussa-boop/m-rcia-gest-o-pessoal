@@ -1,6 +1,7 @@
 // Dados fictícios da demonstração pública. Nunca toca no banco.
 // As datas são relativas a "hoje" para que o calendário e os períodos
 // sempre mostrem um mês vivo.
+import type { FinanceCardLedger } from "./finance-card-payment.functions";
 import type {
   FinanceDashboardSnapshot,
   FinancePlannerItem,
@@ -441,6 +442,71 @@ export function buildDemoTransactions(today: Date = new Date()): FinanceTransact
   );
 }
 
+/** Histórico fictício do cartão; todos os gastos demo ficam abertos até a simulação local. */
+export function buildDemoCardLedger(today: Date = new Date()): FinanceCardLedger {
+  const items = buildDemoTransactions(today)
+    .filter(
+      (transaction) => transaction.type === "despesa" && transaction.paymentMethod === "cartao",
+    )
+    .map((transaction) => ({
+      id: transaction.id,
+      date: transaction.date,
+      amountCents: transaction.amountCents,
+      description: transaction.description,
+      categoryId: transaction.category || null,
+      categoryName: transaction.category || "Sem categoria",
+      categoryColor: transaction.categoryColor || "#94A3B8",
+      cardName: transaction.card || null,
+      settlement:
+        transaction.cardSettlement === "pending"
+          ? ("pending" as const)
+          : transaction.cardSettlement === "paid"
+            ? ("paid" as const)
+            : ("legacy" as const),
+      paymentDate: transaction.cardSettlement === "paid" ? transaction.paidAt || null : null,
+      paymentAccountName: null,
+      paymentBatchId: null,
+    }));
+  const pendingItems = items.filter((item) => item.settlement === "pending");
+  const settledItems = items.filter((item) => item.settlement === "paid");
+  return {
+    items,
+    accounts: [],
+    pendingTotalCents: pendingItems.reduce((total, item) => total + item.amountCents, 0),
+    pendingCount: pendingItems.length,
+    settledTotalCents: settledItems.reduce((total, item) => total + item.amountCents, 0),
+    legacyCount: items.filter((item) => item.settlement === "legacy").length,
+  };
+}
+
+/** Simula uma quitação no demo sem gravar ou chamar o banco real. */
+export function settleDemoCardLedger(
+  ledger: FinanceCardLedger,
+  batchId: string,
+  paymentDate: string,
+  accountName: string,
+): FinanceCardLedger {
+  const paidCents = ledger.pendingTotalCents;
+  if (ledger.pendingCount === 0 || paidCents <= 0) return ledger;
+  return {
+    ...ledger,
+    items: ledger.items.map((item) =>
+      item.settlement === "pending"
+        ? {
+            ...item,
+            settlement: "paid" as const,
+            paymentDate,
+            paymentAccountName: accountName,
+            paymentBatchId: batchId,
+          }
+        : item,
+    ),
+    pendingTotalCents: 0,
+    pendingCount: 0,
+    settledTotalCents: ledger.settledTotalCents + paidCents,
+  };
+}
+
 export function buildDemoPlanner(
   transactions: FinanceTransactionDetail[],
   first: string,
@@ -529,7 +595,7 @@ export function buildDemoSnapshot(
   } = balance;
   const byCategory = new Map<string, number>();
   rows
-    .filter((t) => t.type === "despesa" && t.status === "pago")
+    .filter((t) => t.type === "despesa" && (t.status === "pago" || t.cardSettlement === "pending"))
     .forEach((t) =>
       byCategory.set(
         t.category || "Sem categoria",
@@ -540,6 +606,14 @@ export function buildDemoSnapshot(
     (total, amount) => total + amount,
     0,
   );
+  const cardPendingCents = transactions
+    .filter(
+      (transaction) =>
+        transaction.type === "despesa" &&
+        transaction.status !== "cancelado" &&
+        transaction.cardSettlement === "pending",
+    )
+    .reduce((total, transaction) => total + transaction.amountCents, 0);
   const categories = Array.from(byCategory.entries())
     .map(([name, amountCents]) => ({
       id: name,
@@ -591,6 +665,8 @@ export function buildDemoSnapshot(
       receivedCents,
       spentCents,
       cardExpenseCents,
+      cardPendingCents,
+      categorySpendCents: categoryTotalSpendCents,
       netCents,
       pendingIncomeCents,
       pendingExpenseCents,

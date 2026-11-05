@@ -7,6 +7,7 @@ import {
   type ChatPhase,
   type MarciaChatController,
 } from "@/components/finance/marcia-chat-types";
+import { financePaymentMethodLabelFromText } from "@/lib/finance-payment-method";
 
 const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -37,15 +38,7 @@ function buildDraft(text: string, amount: number, dateLabel?: string): Draft {
   const bill = /vence|conta de|boleto|lembre|lembrete|dia \d{1,2}|\(data:/.test(lower);
   const category =
     CATEGORY_HINTS.find(([re]) => re.test(lower))?.[1] || (income ? "Renda extra" : "Outros");
-  const payment = /pix/.test(lower)
-    ? "Pix"
-    : /cart[aã]o|cr[eé]dito|d[eé]bito/.test(lower)
-      ? "Cartão"
-      : /dinheiro/.test(lower)
-        ? "Dinheiro"
-        : bill
-          ? "Boleto"
-          : "Pix";
+  const payment = financePaymentMethodLabelFromText(text);
   const description =
     text
       .replace(/\(data:.*?\)/, "")

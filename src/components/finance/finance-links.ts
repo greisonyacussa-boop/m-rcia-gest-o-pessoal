@@ -5,6 +5,7 @@ export type FinanceArea = "app" | "demo";
 const APP_LINKS = {
   overview: "/app/inicio",
   transactions: "/app/movimentacoes",
+  card: "/app/cartao",
   planner: "/app/planejamento",
   chat: "/app/marcia",
   settings: "/app/configuracoes",
@@ -13,6 +14,7 @@ const APP_LINKS = {
 const DEMO_LINKS = {
   overview: "/demo/dashboard",
   transactions: "/demo/movimentacoes",
+  card: "/demo/cartao",
   planner: "/demo/planejamento",
   chat: "/demo/marcia",
   settings: "/demo/configuracoes",

@@ -7,6 +7,14 @@ import {
   loadFinanceRows,
   summarizeFinanceCash,
 } from "./finance-balance";
+import {
+  canonicalizeFinancePaymentMethod,
+  financePaymentMethodQuestion,
+  needsFinancePaymentMethod,
+  resolveExplicitFinancePaymentMethod,
+  lastExplicitFinancePaymentMethod,
+  type FinancePaymentMethod,
+} from "./finance-payment-method";
 
 type FinanceIntent =
   | "record_expense"
@@ -27,7 +35,7 @@ type Draft = {
   categoryName?: string | null;
   accountId?: string | null;
   accountName?: string | null;
-  paymentMethod?: "pix" | "cartao" | "dinheiro" | "transferencia" | "boleto" | "outro" | null;
+  paymentMethod?: FinancePaymentMethod | null;
   paymentStatus?: "paid" | "pending" | null;
   date?: string | null;
   frequency?: "semanal" | "quinzenal" | "mensal" | "anual" | null;
@@ -87,7 +95,7 @@ function normalize(value: unknown): Draft {
   const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   const intent = text(raw.intent, 30) as FinanceIntent | null;
   const type = text(raw.type, 12);
-  const method = text(raw.paymentMethod, 20);
+  const method = canonicalizeFinancePaymentMethod(text(raw.paymentMethod, 20));
   const status = text(raw.paymentStatus, 12);
   const frequency = text(raw.frequency, 16);
   const period = text(raw.queryPeriod, 12);
@@ -100,10 +108,7 @@ function normalize(value: unknown): Draft {
     categoryName: text(raw.categoryName, 120),
     accountId: uuid(raw.accountId),
     accountName: text(raw.accountName, 120),
-    paymentMethod:
-      method && ["pix", "cartao", "dinheiro", "transferencia", "boleto", "outro"].includes(method)
-        ? (method as Draft["paymentMethod"])
-        : null,
+    paymentMethod: method === "unknown" ? null : method,
     paymentStatus: status === "paid" || status === "pending" ? status : null,
     date: /^\d{4}-\d{2}-\d{2}$/.test(String(raw.date || "")) ? String(raw.date) : null,
     frequency:
@@ -145,11 +150,13 @@ function merge(previous: Draft | null, next: Draft) {
     (next.intent !== "unknown" && next.intent !== previous.intent)
   )
     return next;
+  const updates: Record<string, unknown> = Object.fromEntries(
+    Object.entries(next).filter(([, value]) => value != null && value !== ""),
+  );
+  if ("paymentMethod" in next) updates.paymentMethod = next.paymentMethod;
   return normalize({
     ...previous,
-    ...Object.fromEntries(
-      Object.entries(next).filter(([, value]) => value != null && value !== ""),
-    ),
+    ...updates,
     intent: previous.intent,
   });
 }
@@ -210,6 +217,9 @@ function missing(draft: Draft) {
     !draft.summary ? "summary" : "",
     !draft.amountCents ? "amount" : "",
     draft.accountName && !draft.accountId ? "account" : "",
+    needsFinancePaymentMethod(draft.intent, draft.paymentStatus, draft.paymentMethod)
+      ? "payment_method"
+      : "",
   ].filter(Boolean);
 }
 
@@ -236,6 +246,10 @@ function question(field: string, context: FinanceContext) {
       .slice(0, 6)
       .map((row) => row.name)
       .join(", ")}.`;
+  if (field === "payment_method") {
+    const paymentQuestion = financePaymentMethodQuestion();
+    return `${paymentQuestion.message} Opções: ${paymentQuestion.quickReplies.join(", ")}.`;
+  }
   return "O que ficou faltando nessa informação?";
 }
 
@@ -304,6 +318,9 @@ REGRAS:
 - conta/boleto/vai vencer/tenho que pagar/me lembre = create_bill pendente.
 - todo mês/semana/ano = create_recurring.
 - pedido de saldo/resumo/quanto gastei = query_summary.
+- paymentMethod é um enum: "pix", "cartao", "dinheiro", "transferencia", "boleto", "outro" ou null. "cartão", "cartão de crédito", "cartao de credito" e "crédito" viram "cartao"; "Pix" vira "pix". "cartão de débito" e "débito" não são crédito: deixe null para perguntar. Nunca escolha Pix por padrão.
+- Exemplo: "paguei no cartão de crédito" => paymentMethod="cartao"; "paguei no Pix" => paymentMethod="pix"; "paguei no débito" => paymentMethod=null.
+- Em uma despesa ou receita paga, se o usuário não disser explicitamente a forma de pagamento, deixe paymentMethod null; o sistema fará a pergunta. Não copie uma forma de pagamento inferida pela IA ou de um rascunho sem menção explícita do usuário.
 - Em imagem, leia estabelecimento, total e data quando estiverem legíveis. Se não estiver seguro, deixe null.
 - categoryId/accountId só podem vir do CONTEXTO REAL.
 - accountName só pode receber o nome exato de uma conta do CONTEXTO REAL. Marca de cartão ou banco citada apenas como meio de pagamento não é uma conta cadastrada: use paymentMethod e deixe accountName/accountId nulos.
@@ -346,7 +363,7 @@ async function summary(db: any, companyId: string, period: Draft["queryPeriod"])
     rows.map(financeBalanceEntryFromRow),
     financeCashSummaryRange(period || "month"),
   );
-  return `No período, entraram ${money(summary.receivedCents)}, saíram ${money(summary.spentCents)}, os gastos no cartão somam ${money(summary.cardExpenseCents)} (com ${money(summary.cardPendingCents)} aguardando quitação) e há ${money(summary.pendingExpenseCents)} para pagar. Resultado de caixa: ${money(summary.netCents)}.`;
+  return `No período, entraram ${money(summary.receivedCents)}, saíram ${money(summary.spentCents)}. Gastos no cartão neste período: ${money(summary.cardExpenseCents)}. Total pendente do cartão (todos os meses): ${money(summary.cardPendingCents)}. Há ${money(summary.pendingExpenseCents)} para pagar. Resultado de caixa: ${money(summary.netCents)}.`;
 }
 
 async function execute(db: any, companyId: string, userId: string, command: any) {
@@ -628,10 +645,31 @@ export async function handleFinanceWhatsapp(input: {
   try {
     const context = await loadContext(input.db, input.companyId);
     const previous = active.data ? normalize(active.data.draft) : null;
+    const previousExplicitPayment = lastExplicitFinancePaymentMethod(active.data?.messages);
+    const trustedPrevious = previous
+      ? {
+          ...previous,
+          paymentMethod:
+            previousExplicitPayment && previousExplicitPayment !== "unknown"
+              ? previousExplicitPayment
+              : null,
+        }
+      : null;
+    const interpreted = await interpret(
+      input.message,
+      trustedPrevious,
+      context,
+      input.imageDataUrl,
+    );
+    const explicitPayment = resolveExplicitFinancePaymentMethod(
+      input.message,
+      active.data?.messages,
+    );
     draft = resolve(
-      merge(previous, await interpret(input.message, previous, context, input.imageDataUrl)),
+      merge(trustedPrevious, { ...interpreted, paymentMethod: explicitPayment }),
       context,
     );
+    draft.paymentMethod = explicitPayment;
     if (!draft.date && ["record_expense", "record_income"].includes(draft.intent))
       draft.date = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
     if (!draft.type && draft.intent === "record_expense") draft.type = "despesa";

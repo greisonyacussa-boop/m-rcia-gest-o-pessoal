@@ -3,6 +3,7 @@ import { createFileRoute, Link, Outlet, useLocation } from "@tanstack/react-rout
 import {
   ArrowLeftRight,
   CalendarDays,
+  CreditCard,
   Home,
   LayoutGrid,
   LogIn,
@@ -21,6 +22,7 @@ export const Route = createFileRoute("/demo")({ component: DemoLayout });
 type DemoPath =
   | "/demo/dashboard"
   | "/demo/movimentacoes"
+  | "/demo/cartao"
   | "/demo/planejamento"
   | "/demo/marcia"
   | "/demo/configuracoes";
@@ -34,13 +36,14 @@ type DemoNavItem = {
   matches?: string[];
 };
 
-// Mesma navegação do painel real: cinco áreas, sem contas/cartões.
+// Mesma navegação principal do painel real, incluindo a área de cartão.
 const navigation: Array<{ label: string; items: DemoNavItem[] }> = [
   {
     label: "Seu financeiro",
     items: [
       { to: "/demo/dashboard", label: "Visão do mês", icon: Home },
       { to: "/demo/movimentacoes", label: "Movimentações", icon: ArrowLeftRight },
+      { to: "/demo/cartao", label: "Cartão", icon: CreditCard },
       { to: "/demo/planejamento", label: "Planejamento e calendário", icon: CalendarDays },
       { to: "/demo/marcia", label: "Falar com a MárcIA", icon: Sparkles, featured: true },
     ],
@@ -50,6 +53,7 @@ const navigation: Array<{ label: string; items: DemoNavItem[] }> = [
 const mobileItems: MobileNavItem[] = [
   { to: "/demo/dashboard", label: "Mês", icon: Home },
   { to: "/demo/movimentacoes", label: "Extrato", icon: ArrowLeftRight },
+  { to: "/demo/cartao", label: "Cartão", icon: CreditCard },
   { to: "/demo/marcia", label: "MárcIA", icon: Sparkles },
   { to: "/demo/planejamento", label: "Calendário", icon: CalendarDays },
   { to: "/demo/configuracoes", label: "Ajustes", icon: Settings2 },

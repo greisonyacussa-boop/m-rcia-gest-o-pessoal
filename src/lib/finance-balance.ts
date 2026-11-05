@@ -169,14 +169,13 @@ export function summarizeFinanceCash(
   period: FinanceBalancePeriod,
 ): FinanceCashSummary {
   const totals = calculateFinanceBalance(entries, period);
+  // A fatura permanece aberta entre competências até o usuário confirmar a quitação.
   const cardPendingCents = entries
     .filter(
       (entry) =>
         entry.status !== "cancelado" &&
         entry.type === "despesa" &&
-        entry.cardSettlement === "pending" &&
-        entry.competence >= period.from &&
-        entry.competence <= period.to,
+        entry.cardSettlement === "pending",
     )
     .reduce((total, entry) => total + cents(entry.amountCents), 0);
   return { ...totals, cardPendingCents };

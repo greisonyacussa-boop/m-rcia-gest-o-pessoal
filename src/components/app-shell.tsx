@@ -5,6 +5,7 @@ import {
   Bell,
   CalendarDays,
   ChevronRight,
+  CreditCard,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -61,8 +62,9 @@ const getMainItems = (assistantName: string): NavItem[] => [
     to: "/app/movimentacoes",
     label: "Movimentações",
     icon: ReceiptText,
-    matches: ["/app/contas", "/app/cartoes"],
+    matches: ["/app/contas"],
   },
+  { to: "/app/cartao", label: "Cartão", icon: CreditCard, matches: ["/app/cartoes"] },
   {
     to: "/app/planejamento",
     label: "Planejamento e calendário",
@@ -144,6 +146,7 @@ export function AppShell({
   const mobileOrder = [
     "/app/inicio",
     "/app/movimentacoes",
+    "/app/cartao",
     "/app/investimentos",
     "/app/marcia",
     "/app/planejamento",

@@ -225,7 +225,7 @@ describe("saldo disponível por competência", () => {
     });
   });
 
-  test("total pendente de cartão no resumo respeita a competência consultada", () => {
+  test("total pendente de cartão no resumo acumula todos os meses até a quitação", () => {
     const summary = summarizeFinanceCash(
       [
         entry("2025-12-15", "despesa", 9000, "pago", {
@@ -241,7 +241,8 @@ describe("saldo disponível por competência", () => {
       ],
       { from: "2026-06-01", to: "2026-06-30" },
     );
-    expect(summary.cardPendingCents).toBe(4500);
+    expect(summary.cardExpenseCents).toBe(4500);
+    expect(summary.cardPendingCents).toBe(13500);
   });
 });
 

@@ -23,6 +23,8 @@ export type FinanceDashboardSnapshot = {
     receivedCents: number;
     spentCents: number;
     cardExpenseCents: number;
+    cardPendingCents: number;
+    categorySpendCents: number;
     netCents: number;
     pendingIncomeCents: number;
     pendingExpenseCents: number;
@@ -235,6 +237,7 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
       cards,
       invoices,
       goals,
+      cardPendingRows,
     ] = await Promise.all([
       loadFinanceRows<any>(({ from: pageFrom, to: pageTo }) =>
         db
@@ -279,11 +282,7 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
         .eq("company_id", data.companyId)
         .eq("ativo", true)
         .order("nome"),
-      db
-        .from("fin_categoria")
-        .select("id,nome,tipo,cor")
-        .eq("company_id", data.companyId)
-        .eq("ativo", true),
+      db.from("fin_categoria").select("id,nome,tipo,cor").eq("company_id", data.companyId),
       db
         .from("fin_orcamento")
         .select("id,categoria_id,limite_cents,competencia")
@@ -305,6 +304,19 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
         .eq("company_id", data.companyId)
         .eq("status", "ativa")
         .order("created_at"),
+      loadFinanceRows<any>(({ from: pageFrom, to: pageTo }) =>
+        db
+          .from("fin_lancamento")
+          .select("id,valor_cents,created_at")
+          .eq("company_id", data.companyId)
+          .eq("tipo", "despesa")
+          .eq("forma_pagamento", "cartao")
+          .eq("metadata->>card_settlement", "pending")
+          .neq("status", "cancelado")
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(pageFrom, pageTo),
+      ),
     ]);
 
     const failed = [upcomingRows, accounts, categories, budgets, cards, invoices, goals].find(
@@ -336,13 +348,21 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
     const categoryById = new Map((categories.data || []).map((row: any) => [row.id, row] as const));
     const categorySpend = new Map<string, number>();
     rows
-      .filter((row: any) => row.tipo === "despesa" && row.status === "pago")
+      .filter(
+        (row: any) =>
+          row.tipo === "despesa" &&
+          (row.status === "pago" || readFinanceCardSettlement(row.metadata) === "pending"),
+      )
       .forEach((row: any) => {
         const key = row.categoria_id || "uncategorized";
         categorySpend.set(key, (categorySpend.get(key) || 0) + cents(row.valor_cents));
       });
     const categoryTotalSpendCents = Array.from(categorySpend.values()).reduce(
       (total, amount) => total + amount,
+      0,
+    );
+    const cardPendingCents = cardPendingRows.reduce(
+      (total: number, row: any) => total + cents(row.valor_cents),
       0,
     );
     const categoryList = Array.from(categorySpend.entries())
@@ -440,6 +460,8 @@ export const getFinanceDashboard = createServerFn({ method: "POST" })
         receivedCents,
         spentCents,
         cardExpenseCents,
+        cardPendingCents,
+        categorySpendCents: categoryTotalSpendCents,
         netCents,
         pendingIncomeCents,
         pendingExpenseCents,
