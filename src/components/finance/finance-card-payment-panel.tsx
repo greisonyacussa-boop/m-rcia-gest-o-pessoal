@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { MoneyInput } from "@/components/money-input";
 import { markFinanceCardPaid } from "@/lib/finance-card-payment.functions";
 
 export function FinanceCardPaymentPanel({
@@ -39,6 +40,8 @@ export function FinanceCardPaymentPanel({
   const [open, setOpen] = useState(false);
   const [accountId, setAccountId] = useState(accounts[0]?.id || "");
   const [saving, setSaving] = useState(false);
+  const [mode, setMode] = useState<"total" | "partial">("total");
+  const [amountCents, setAmountCents] = useState<number | null>(null);
 
   useEffect(() => {
     if (!accounts.some((account) => account.id === accountId)) {
@@ -52,9 +55,15 @@ export function FinanceCardPaymentPanel({
       toast.error("Escolha a conta de onde saiu o pagamento.");
       return;
     }
+    if (mode === "partial" && (!amountCents || amountCents <= 0 || amountCents > pendingTotalCents)) {
+      toast.error(`Informe um valor entre R$ 0,01 e ${financeMoney(pendingTotalCents)}.`);
+      return;
+    }
     setSaving(true);
     try {
-      const result = await pay({ data: { companyId, accountId } });
+      const result = await pay({
+        data: { companyId, accountId, amountCents: mode === "partial" ? amountCents : null },
+      });
       if (result.paidCount > 0) {
         const accountName = accounts.find((account) => account.id === accountId)?.name;
         toast.success(
@@ -104,12 +113,47 @@ export function FinanceCardPaymentPanel({
             <DialogHeader>
               <DialogTitle>Registrar pagamento do cartão</DialogTitle>
               <DialogDescription>
-                O total acumulado de {financeMoney(pendingTotalCents)} será abatido uma única vez da
-                conta escolhida. Este botão registra que você já pagou; não envia dinheiro ao banco.
-                Limite e vencimento não acionam a baixa.
+                Em aberto: {financeMoney(pendingTotalCents)}. O valor pago é descontado do saldo da
+                conta escolhida. Este botão só registra o pagamento; não envia dinheiro ao banco.
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={confirmPayment} className="space-y-4">
+              <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Tipo de pagamento">
+                {(
+                  [
+                    ["total", "Valor total", financeMoney(pendingTotalCents)],
+                    ["partial", "Valor avulso", "Paguei só uma parte"],
+                  ] as const
+                ).map(([value, label, helper]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={mode === value}
+                    onClick={() => setMode(value)}
+                    className={`rounded-xl border p-3 text-left text-sm transition ${mode === value ? "border-violet-600 bg-violet-50 dark:bg-violet-950/40" : "border-border"}`}
+                  >
+                    <strong className="block">{label}</strong>
+                    <span className="text-xs text-muted-foreground">{helper}</span>
+                  </button>
+                ))}
+              </div>
+              {mode === "partial" ? (
+                <div>
+                  <Label>Quanto você pagou?</Label>
+                  <MoneyInput
+                    cents={amountCents}
+                    onChange={setAmountCents}
+                    maxCents={pendingTotalCents}
+                    className="mt-1 h-10 rounded-xl"
+                  />
+                  {amountCents && amountCents > 0 && amountCents <= pendingTotalCents ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Vai faltar {financeMoney(pendingTotalCents - amountCents)} no cartão.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               <div>
                 <Label>Conta usada para pagar</Label>
                 <Select value={accountId} onValueChange={setAccountId}>
@@ -130,7 +174,11 @@ export function FinanceCardPaymentPanel({
                 disabled={saving || !accountId}
                 className="w-full rounded-xl bg-violet-700 hover:bg-violet-800"
               >
-                {saving ? "Registrando…" : "Confirmar que o cartão foi pago"}
+                {saving
+                  ? "Registrando…"
+                  : mode === "partial"
+                    ? "Confirmar pagamento avulso"
+                    : "Confirmar que o cartão foi pago"}
               </Button>
             </form>
           </DialogContent>

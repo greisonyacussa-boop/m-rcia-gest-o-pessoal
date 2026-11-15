@@ -59,21 +59,37 @@ const isoDate = (value: unknown): string | null => {
 
 export const markFinanceCardPaid = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { companyId: string; accountId: string }) => {
+  .inputValidator((input: { companyId: string; accountId: string; amountCents?: number | null }) => {
     const companyId = String(input?.companyId || "").trim();
     const accountId = String(input?.accountId || "").trim();
     if (!companyId) throw new Error("Conta não informada.");
     if (!accountId) throw new Error("Escolha a conta de onde saiu o pagamento.");
-    return { companyId, accountId };
+    const rawAmount = input?.amountCents;
+    let amountCents: number | null = null;
+    if (rawAmount != null) {
+      amountCents = Number(rawAmount);
+      if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+        throw new Error("Informe um valor pago maior que zero.");
+      }
+    }
+    return { companyId, accountId, amountCents };
   })
   .handler(async ({ context, data }): Promise<FinanceCardPaymentResult> => {
     await authorizeFinanceCardAccess(context, data.companyId);
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: result, error } = await (supabaseAdmin as any).rpc(
-      "mark_pending_finance_card_charges_paid",
-      { _company_id: data.companyId, _account_id: data.accountId },
-    );
+    // Valor informado = pagamento avulso (abate das compras mais antigas); sem valor = quita tudo.
+    const { data: result, error } =
+      data.amountCents != null
+        ? await (supabaseAdmin as any).rpc("pay_finance_card_amount", {
+            _company_id: data.companyId,
+            _account_id: data.accountId,
+            _amount_cents: data.amountCents,
+          })
+        : await (supabaseAdmin as any).rpc("mark_pending_finance_card_charges_paid", {
+            _company_id: data.companyId,
+            _account_id: data.accountId,
+          });
     if (error) throw new Error(error.message);
     const row = Array.isArray(result) ? result[0] : result;
     const paidCount = Number(row?.paid_count || 0);
