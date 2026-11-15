@@ -4655,6 +4655,17 @@ export type Database = {
         }
         Returns: string
       }
+      pay_finance_card_amount: {
+        Args: {
+          _account_id: string
+          _amount_cents: number
+          _company_id: string
+        }
+        Returns: {
+          paid_cents: number
+          paid_count: number
+        }[]
+      }
       persist_outbound_messages_and_finalize_quota: {
         Args: {
           _author: string
