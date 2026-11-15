@@ -1,5 +1,13 @@
 {
   "version": "7",
   "dialect": "postgresql",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1794716717930,
+      "tag": "0000_restrict_plan_authenticated_read",
+      "breakpoints": true
+    }
+  ]
 }
