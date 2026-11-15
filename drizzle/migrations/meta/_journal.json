@@ -1,5 +1,20 @@
 {
   "version": "7",
   "dialect": "postgresql",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1794716717930,
+      "tag": "0000_restrict_plan_authenticated_read",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794716744018,
+      "tag": "0001_add_investments_tables",
+      "breakpoints": true
+    }
+  ]
 }
