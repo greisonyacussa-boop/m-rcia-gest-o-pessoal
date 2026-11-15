@@ -4647,6 +4647,13 @@ export type Database = {
         Args: { _attempted_count: number; _company_id: string; _ref: string }
         Returns: boolean
       }
+      mark_pending_finance_card_charges_paid: {
+        Args: { _account_id: string; _company_id: string }
+        Returns: {
+          paid_cents: number
+          paid_count: number
+        }[]
+      }
       migrate_generated_assistant_presentation: {
         Args: {
           _next_name: string
