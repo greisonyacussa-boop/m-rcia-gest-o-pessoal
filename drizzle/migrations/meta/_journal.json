@@ -29,6 +29,13 @@
       "when": 1794721627173,
       "tag": "0003_restore_full_card_payment",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794725454164,
+      "tag": "0004_fix_card_partial_payment_unique",
+      "breakpoints": true
     }
   ]
 }
